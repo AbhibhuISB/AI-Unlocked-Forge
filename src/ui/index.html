@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FORGE Prototype UI</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: Inter, Segoe UI, Arial, sans-serif; margin: 0; background: #0b1020; color: #e5e7eb; }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 20px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .card { background: #121a31; border: 1px solid #24314f; border-radius: 12px; padding: 14px; }
+    h1 { margin: 0 0 8px; font-size: 22px; }
+    h2 { margin: 0 0 10px; font-size: 16px; }
+    label { display: block; font-size: 13px; margin: 8px 0 6px; color: #cbd5e1; }
+    input, textarea, select, button { width: 100%; box-sizing: border-box; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; padding: 10px; font: inherit; }
+    textarea { min-height: 92px; resize: vertical; }
+    .row3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .row2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    button { background: #2563eb; border-color: #1d4ed8; cursor: pointer; font-weight: 600; }
+    button:disabled { opacity: 0.65; cursor: not-allowed; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; background: #0b1226; border: 1px solid #23335d; border-radius: 8px; padding: 10px; min-height: 80px; }
+    .ok { color: #34d399; }
+    .err { color: #f87171; }
+    .muted { color: #94a3b8; font-size: 13px; }
+    .full { margin-top: 16px; }
+    .pill { display: inline-block; border: 1px solid #334155; padding: 3px 8px; border-radius: 999px; margin-right: 8px; font-size: 12px; }
+    @media (max-width: 900px) { .grid, .row3, .row2 { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>FORGE Prototype UI</h1>
+    <div class="muted">Run Planner → Retriever → Executor from the browser. If Azure deployment is pending, you will still see clear backend errors here.</div>
+
+    <div class="grid" style="margin-top: 14px;">
+      <div class="card">
+        <h2>Input</h2>
+        <label>Goal</label>
+        <textarea id="goal">Create a 12-week product roadmap for a SaaS team.</textarea>
+
+        <label>Constraints (one per line)</label>
+        <textarea id="constraints">Two compliance milestones by week 8
+Team capacity of 4 engineers
+Include explicit assumptions</textarea>
+
+        <div class="row3">
+          <div>
+            <label>Strategy Threshold</label>
+            <input id="strategy" type="number" min="0.1" max="1" step="0.01" value="0.8" />
+          </div>
+          <div>
+            <label>Quality Threshold</label>
+            <input id="quality" type="number" min="0.1" max="1" step="0.01" value="0.85" />
+          </div>
+          <div>
+            <label>Max Iterations</label>
+            <input id="iterations" type="number" min="1" max="10" step="1" value="3" />
+          </div>
+        </div>
+
+        <div class="row2">
+          <div>
+            <label>Output Format</label>
+            <select id="format">
+              <option value="markdown">markdown</option>
+              <option value="text">text</option>
+              <option value="json">json</option>
+            </select>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="runBtn">Run FORGE</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Status</h2>
+        <div><span class="pill">Backend</span><span id="health" class="muted">Checking...</span></div>
+        <div style="margin-top: 8px;"><span class="pill">Run</span><span id="runStatus" class="muted">Idle</span></div>
+        <div style="margin-top: 8px;"><span class="pill">Ended Reason</span><span id="ended" class="muted">-</span></div>
+        <div style="margin-top: 8px;"><span class="pill">Iterations</span><span id="iters" class="muted">-</span></div>
+      </div>
+    </div>
+
+    <div class="grid full">
+      <div class="card">
+        <h2>Activity Log</h2>
+        <div id="activity" class="mono"></div>
+      </div>
+      <div class="card">
+        <h2>Output</h2>
+        <div id="output" class="mono"></div>
+      </div>
+    </div>
+
+    <div class="grid full">
+      <div class="card">
+        <h2>Confidence Trace</h2>
+        <div id="confidence" class="mono"></div>
+      </div>
+      <div class="card">
+        <h2>Quality Trace</h2>
+        <div id="qualityTrace" class="mono"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const healthEl = document.getElementById('health');
+    const runStatusEl = document.getElementById('runStatus');
+    const endedEl = document.getElementById('ended');
+    const itersEl = document.getElementById('iters');
+    const activityEl = document.getElementById('activity');
+    const outputEl = document.getElementById('output');
+    const confidenceEl = document.getElementById('confidence');
+    const qualityTraceEl = document.getElementById('qualityTrace');
+    const runBtn = document.getElementById('runBtn');
+
+    async function checkHealth() {
+      try {
+        const res = await fetch('/health');
+        const json = await res.json();
+        healthEl.textContent = `${res.status} ${json.status}`;
+        healthEl.className = 'ok';
+      } catch (e) {
+        healthEl.textContent = 'unreachable';
+        healthEl.className = 'err';
+      }
+    }
+
+    function renderActivity(items) {
+      if (!items || !items.length) {
+        activityEl.textContent = 'No activity yet.';
+        return;
+      }
+      activityEl.textContent = items.map((x) => `[${x.step}] ${x.message}`).join('\n');
+    }
+
+    async function runForge() {
+      runBtn.disabled = true;
+      runStatusEl.textContent = 'Running...';
+      runStatusEl.className = 'muted';
+      outputEl.textContent = '';
+      activityEl.textContent = '';
+      confidenceEl.textContent = '';
+      qualityTraceEl.textContent = '';
+      endedEl.textContent = '-';
+      itersEl.textContent = '-';
+
+      const payload = {
+        goal: document.getElementById('goal').value.trim(),
+        constraints: document.getElementById('constraints').value.split('\n').map(s => s.trim()).filter(Boolean),
+        config: {
+          strategy_threshold: Number(document.getElementById('strategy').value),
+          quality_threshold: Number(document.getElementById('quality').value),
+          max_iterations: Number(document.getElementById('iterations').value),
+          output_format: document.getElementById('format').value
+        }
+      };
+
+      try {
+        const res = await fetch('/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          const errText = await res.text();
+          runStatusEl.textContent = `Error ${res.status}`;
+          runStatusEl.className = 'err';
+          outputEl.textContent = errText;
+          return;
+        }
+
+        const data = await res.json();
+        runStatusEl.textContent = 'Completed';
+        runStatusEl.className = 'ok';
+        endedEl.textContent = data.ended_reason || '-';
+        itersEl.textContent = String(data.iterations ?? '-');
+        renderActivity(data.activity_log || []);
+        outputEl.textContent = data.final_output || '';
+        confidenceEl.textContent = JSON.stringify(data.confidence_trace || [], null, 2);
+        qualityTraceEl.textContent = JSON.stringify(data.quality_trace || [], null, 2);
+      } catch (e) {
+        runStatusEl.textContent = 'Network error';
+        runStatusEl.className = 'err';
+        outputEl.textContent = String(e);
+      } finally {
+        runBtn.disabled = false;
+      }
+    }
+
+    runBtn.addEventListener('click', runForge);
+    checkHealth();
+  </script>
+</body>
+</html>
