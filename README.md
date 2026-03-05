@@ -2,7 +2,30 @@
 
 For a non-technical setup walkthrough, use `README-BEGINNER.md`.
 
-## Latest updates (March 2026)
+## Part 1: What it is, how it works, and what it uses
+
+### What it is
+FORGE is a 3-agent prototype for iterative problem-solving:
+- Planner Agent
+- Retriever Agent
+- Executor Agent
+
+It runs as a FastAPI backend with a built-in UI.
+
+### How it works
+- Two-phase loop:
+  - Phase 1: Planner + Retriever (confidence-gated)
+  - Phase 2: Executor + Devil's Advocate review (quality-gated)
+- Constraint pinboard and activity log
+- Delta patch refinement (targeted fixes)
+- UI at `/` to run the pipeline interactively
+
+### What it uses
+- Python + FastAPI
+- Azure OpenAI (required for LLM calls)
+- Optional Bing Search v7 (for web retrieval)
+
+### Latest updates (March 2026)
 - Added dual run modes:
   - Quick Run (fully autonomous)
   - Guided Run (planner asks clarification questions each planning iteration)
@@ -27,22 +50,9 @@ For a non-technical setup walkthrough, use `README-BEGINNER.md`.
   - quick/guided button style consistency
 - Added reusable smoke tests in `tests/smoke_test.py`
 
-FORGE is a 3-agent prototype for iterative problem-solving:
-- Planner Agent
-- Retriever Agent
-- Executor Agent
+## Part 2: How to use it
 
-It runs as a FastAPI backend with a built-in UI.
-
-## Features
-- Two-phase loop:
-  - Phase 1: Planner + Retriever (confidence-gated)
-  - Phase 2: Executor + Devil's Advocate review (quality-gated)
-- Constraint pinboard and activity log
-- Delta patch refinement (targeted fixes)
-- UI at `/` to run the pipeline interactively
-
-## 1) Azure setup (required)
+### 1) Azure setup (required)
 
 ### A. Create Azure OpenAI resource
 Create one Azure OpenAI resource in Azure Portal (or AI Foundry).
@@ -60,7 +70,7 @@ Create Bing Search v7 resource and keep:
 - `BING_SEARCH_API_KEY`
 - `BING_SEARCH_ENDPOINT`
 
-## 2) Configure environment
+### 2) Configure environment
 
 ```powershell
 cd "d:\ISB\microsoft case comp\forge-prototype"
@@ -81,7 +91,7 @@ BING_SEARCH_API_KEY=<optional>
 BING_SEARCH_ENDPOINT=https://api.bing.microsoft.com/v7.0/search
 ```
 
-## 3) Run locally
+### 3) Run locally
 
 ```powershell
 cd "d:\ISB\microsoft case comp\forge-prototype"
@@ -96,7 +106,13 @@ Open:
 - Docs: `http://127.0.0.1:8000/docs`
 - Health: `http://127.0.0.1:8000/health`
 
-## 4) Test API quickly
+### 4) Use the app
+
+- Quick Run: open the UI, enter goal/constraints, and run end-to-end autonomously.
+- Guided Run: open the UI, start guided mode, answer planner questions each planning iteration, and continue until completion.
+- Interrupt: use the UI interrupt button (or cancel API endpoint) to stop an in-progress guided run.
+
+### 5) Test API quickly
 
 ```powershell
 $body = @'
@@ -116,31 +132,6 @@ $body = @'
 }
 '@
 Invoke-RestMethod -Uri "http://127.0.0.1:8000/run" -Method Post -ContentType "application/json" -Body $body
-```
-
-## 5) Push to GitHub
-
-Initialize and push from project root:
-
-```powershell
-cd "d:\ISB\microsoft case comp\forge-prototype"
-git init
-git add .
-git commit -m "Initial FORGE prototype"
-```
-
-### HTTPS remote
-```powershell
-git remote add origin https://github.com/<your-user>/<your-repo>.git
-git branch -M main
-git push -u origin main
-```
-
-### SSH remote
-```powershell
-git remote add origin git@github.com:<your-user>/<your-repo>.git
-git branch -M main
-git push -u origin main
 ```
 
 ## Security notes
