@@ -2,7 +2,27 @@
 
 This guide helps you run FORGE in the easiest way possible.
 
-## What was recently updated (March 2026)
+## Part 1: What it is, how it works, and what it uses
+
+## What is FORGE?
+FORGE is a project with 3 AI roles working together:
+- Planner (makes the plan)
+- Retriever (finds information)
+- Executor (creates the final output)
+
+It runs as a local web app (FastAPI backend + browser UI).
+
+## How it works
+- Quick Run: AI runs everything automatically.
+- Guided Run: AI asks you for input while planning.
+- If needed, you can interrupt a running request safely.
+
+## What it uses
+- Python (runs locally on your Windows laptop)
+- Azure OpenAI (required for AI responses)
+- Optional Bing Search (for web evidence)
+
+## Recent updates (March 2026)
 - Added two run modes:
 	- Quick Run: AI runs everything automatically.
 	- Guided Run: AI asks you for input while planning.
@@ -21,13 +41,7 @@ This guide helps you run FORGE in the easiest way possible.
 	- conflict source-priority selection
 	- deadlock guard to stop repeated patch loops
 
-## What is FORGE?
-FORGE is a project with 3 AI roles working together:
-- Planner (makes the plan)
-- Retriever (finds information)
-- Executor (creates the final output)
-
-You will open a web page and click a button to run it.
+## Part 2: How to use it
 
 ## Before you start
 You need:
