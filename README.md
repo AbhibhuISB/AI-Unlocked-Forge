@@ -2,6 +2,31 @@
 
 For a non-technical setup walkthrough, use `README-BEGINNER.md`.
 
+## Latest updates (March 2026)
+- Added dual run modes:
+  - Quick Run (fully autonomous)
+  - Guided Run (planner asks clarification questions each planning iteration)
+- Added interrupt support:
+  - UI Interrupt button
+  - backend endpoint `POST /run/interactive/cancel`
+- Added interactive run APIs:
+  - `POST /run/interactive/start`
+  - `POST /run/interactive/continue`
+- Added planner reasoning summaries to activity logs (short, user-facing updates)
+- Added conflict handling in planning:
+  - when retriever finds conflicting sources, planner asks user to choose source priority
+- Added ping-pong deadlock guard in Phase 2:
+  - repeated consecutive fault IDs trigger `deadlock_guard_triggered`
+- Added Tree-of-Thoughts planning in Planner:
+  - generates multiple strategy paths, scores/prunes, and forwards the best path
+  - includes fallback to legacy single-plan mode for reliability
+- Updated UI:
+  - output in scrollable panel
+  - open output in new tab
+  - guided panel visibility and input locking improvements
+  - quick/guided button style consistency
+- Added reusable smoke tests in `tests/smoke_test.py`
+
 FORGE is a 3-agent prototype for iterative problem-solving:
 - Planner Agent
 - Retriever Agent

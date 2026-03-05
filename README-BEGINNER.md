@@ -2,6 +2,25 @@
 
 This guide helps you run FORGE in the easiest way possible.
 
+## What was recently updated (March 2026)
+- Added two run modes:
+	- Quick Run: AI runs everything automatically.
+	- Guided Run: AI asks you for input while planning.
+- Added Interrupt button:
+	- You can stop a running request safely.
+- Improved Guided Run experience:
+	- AI asks clearer clarification questions.
+	- Input box appears only in Guided Run.
+	- Skip/Submit flow improved.
+- Added better output viewing:
+	- Output is now in a scrollable box.
+	- “Open In New Tab” option added.
+- Planner is now smarter:
+	- Uses a Tree-of-Thoughts approach to compare multiple plan options and choose the best one.
+- Added safety checks:
+	- conflict source-priority selection
+	- deadlock guard to stop repeated patch loops
+
 ## What is FORGE?
 FORGE is a project with 3 AI roles working together:
 - Planner (makes the plan)

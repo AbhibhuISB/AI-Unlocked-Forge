@@ -64,3 +64,21 @@ class RunResponse(BaseModel):
     confidence_trace: List[float]
     quality_trace: List[float]
     evidence_used: List[EvidenceItem]
+
+
+class InteractiveContinueRequest(BaseModel):
+    session_id: str
+    user_comment: Optional[str] = None
+    skip: bool = False
+
+
+class InteractiveCancelRequest(BaseModel):
+    session_id: str
+
+
+class InteractiveRunResponse(BaseModel):
+    status: Literal["needs_input", "completed"]
+    session_id: str
+    question: Optional[str] = None
+    note: Optional[str] = None
+    result: Optional[RunResponse] = None

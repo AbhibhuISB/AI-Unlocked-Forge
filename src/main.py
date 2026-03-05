@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
-from .models import RunRequest, RunResponse
+from .models import InteractiveCancelRequest, InteractiveContinueRequest, InteractiveRunResponse, RunRequest, RunResponse
 from .services.orchestrator import ForgeOrchestrator
 
 
@@ -33,6 +33,33 @@ def run_forge(request: RunRequest) -> RunResponse:
         return orchestrator.run(request)
     except Exception as error:
         raise HTTPException(status_code=503, detail=f"FORGE run failed: {str(error)}") from error
+
+
+@app.post("/run/interactive/start", response_model=InteractiveRunResponse)
+def run_interactive_start(request: RunRequest) -> InteractiveRunResponse:
+    try:
+        return orchestrator.start_interactive(request)
+    except Exception as error:
+        raise HTTPException(status_code=503, detail=f"FORGE interactive start failed: {str(error)}") from error
+
+
+@app.post("/run/interactive/continue", response_model=InteractiveRunResponse)
+def run_interactive_continue(request: InteractiveContinueRequest) -> InteractiveRunResponse:
+    try:
+        return orchestrator.continue_interactive(
+            session_id=request.session_id,
+            user_comment=request.user_comment,
+            skip=request.skip,
+        )
+    except Exception as error:
+        status_code = 404 if "not found" in str(error).lower() else 503
+        raise HTTPException(status_code=status_code, detail=f"FORGE interactive continue failed: {str(error)}") from error
+
+
+@app.post("/run/interactive/cancel")
+def run_interactive_cancel(request: InteractiveCancelRequest) -> dict:
+    orchestrator.cancel_interactive(request.session_id)
+    return {"status": "cancelled", "session_id": request.session_id}
 
 
 if __name__ == "__main__":

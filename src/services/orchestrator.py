@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import os
-from typing import List
+from uuid import uuid4
+from typing import Dict, Tuple
+from urllib.parse import urlparse
 
 from ..agents.executor import ExecutorAgent
 from ..agents.planner import PlannerAgent
 from ..agents.retriever import RetrieverAgent
-from ..models import RunRequest, RunResponse
+from ..models import InteractiveRunResponse, RunRequest, RunResponse
 from .llm_client import LLMClient
 from .search_client import SearchClient
 from ..state.memory import SessionMemory
@@ -19,75 +21,171 @@ class ForgeOrchestrator:
         self.planner = PlannerAgent(self.llm)
         self.retriever = RetrieverAgent(self.search)
         self.executor = ExecutorAgent(self.llm)
+        self.interactive_sessions: Dict[str, dict] = {}
 
-    def run(self, request: RunRequest) -> RunResponse:
+    def _thresholds(self, request: RunRequest) -> Tuple[float, float, int]:
         config = request.config
         strategy_threshold = config.strategy_threshold or float(os.getenv("DEFAULT_STRATEGY_THRESHOLD", "0.8"))
         quality_threshold = config.quality_threshold or float(os.getenv("DEFAULT_QUALITY_THRESHOLD", "0.85"))
         max_iterations = config.max_iterations or int(os.getenv("DEFAULT_MAX_ITERATIONS", "4"))
+        return strategy_threshold, quality_threshold, max_iterations
 
-        memory = SessionMemory(constraint_pinboard=list(request.constraints))
-        evidence_used = []
+    def _planner_step(self, state: dict) -> None:
+        state["memory"].log("planner", f"Planning iteration {state['iteration']}: building task strategy.")
+        plan = self.planner.build_plan(
+            goal=state["goal"],
+            constraints=state["constraints"],
+            pinboard=state["memory"].constraint_pinboard,
+        )
+        state["plan"] = plan
+        state["memory"].confidence_trace.append(plan.confidence)
+        state["memory"].log("planner_confidence", f"Confidence is {plan.confidence:.2f}; checking if strategy is ready.")
 
-        memory.log("session_start", "FORGE run started.")
+        if plan.missing_info_queries:
+            state["memory"].log("retriever", f"I am searching for sources on {len(plan.missing_info_queries)} missing points.")
+            state["evidence_used"] = self.retriever.gather(plan.missing_info_queries)
+            state["memory"].log("retriever", f"Source search complete. Collected {len(state['evidence_used'])} evidence items.")
 
-        plan = None
-        for iteration in range(1, max_iterations + 1):
-            memory.log("planner", f"Building strategy iteration {iteration}.")
-            plan = self.planner.build_plan(
-                goal=request.goal,
-                constraints=request.constraints,
-                pinboard=memory.constraint_pinboard,
+            conflict_domains = self._detect_conflict_domains(state["evidence_used"])
+            state["conflict_domains"] = conflict_domains
+            if conflict_domains:
+                state["memory"].log(
+                    "retriever_conflict",
+                    f"I found potentially conflicting sources: {', '.join(conflict_domains)}.",
+                )
+
+            self._apply_source_priority(state)
+
+    def _detect_conflict_domains(self, evidence) -> list[str]:
+        if len(evidence) < 2:
+            return []
+
+        negation_tokens = [" not ", " no ", " never ", " without ", " cannot ", " can't "]
+        domains = []
+
+        for item in evidence:
+            url = (item.url or "").strip()
+            domain = (urlparse(url).netloc or "unknown").lower()
+            domains.append(domain)
+
+        for i in range(len(evidence)):
+            for j in range(i + 1, len(evidence)):
+                a = f" {evidence[i].snippet.lower()} "
+                b = f" {evidence[j].snippet.lower()} "
+                a_has_neg = any(token in a for token in negation_tokens)
+                b_has_neg = any(token in b for token in negation_tokens)
+                if a_has_neg != b_has_neg:
+                    pair = sorted(set([domains[i], domains[j]]))
+                    return [value for value in pair if value]
+
+        return []
+
+    def _extract_priority_from_comment(self, comment: str, conflict_domains: list[str]) -> str | None:
+        text = (comment or "").lower()
+        for domain in conflict_domains:
+            if domain and domain in text:
+                return domain
+        return None
+
+    def _apply_source_priority(self, state: dict) -> None:
+        priority = (state.get("source_priority") or "").strip().lower()
+        evidence = state.get("evidence_used", [])
+        if not priority or not evidence:
+            return
+
+        prioritized = []
+        others = []
+        for item in evidence:
+            domain = (urlparse((item.url or "").strip()).netloc or "unknown").lower()
+            if priority in domain:
+                prioritized.append(item)
+            else:
+                others.append(item)
+
+        if prioritized:
+            state["evidence_used"] = prioritized + others
+            state["memory"].log("source_priority", f"Prioritizing evidence from {priority}.")
+
+    def _build_question(self, state: dict) -> str:
+        plan = state["plan"]
+
+        conflict_domains = state.get("conflict_domains", [])
+        if conflict_domains and not state.get("source_priority"):
+            return (
+                f"I found conflicting information across sources ({', '.join(conflict_domains)}). "
+                "Which source should I prioritize? You can type a domain name, or click Skip to use default priority."
             )
-            memory.confidence_trace.append(plan.confidence)
-            memory.log("planner_confidence", f"Planner confidence={plan.confidence:.2f}")
 
-            if plan.missing_info_queries:
-                memory.log("retriever", f"Fetching evidence for {len(plan.missing_info_queries)} queries.")
-                evidence_used = self.retriever.gather(plan.missing_info_queries)
-                memory.log("retriever", f"Retrieved {len(evidence_used)} evidence items.")
+        if plan and plan.missing_info_queries:
+            focus = ", ".join(plan.missing_info_queries[:2])
+            return (
+                f"I am currently evaluating: {focus}. "
+                "Do you want me to proceed with this method and current constraints, or change direction?"
+            )
+        return "I can proceed with the current approach. Do you want to add or change any constraints before I continue?"
 
-            if plan.confidence >= strategy_threshold:
-                memory.log("gate", "Strategy threshold met. Moving to execution phase.")
-                break
-
-            memory.log("gate", "Strategy threshold not met. Re-planning.")
+    def _phase2_execute(self, state: dict) -> RunResponse:
+        request = state["request"]
+        memory = state["memory"]
+        plan = state["plan"]
+        max_iterations = state["max_iterations"]
+        quality_threshold = state["quality_threshold"]
 
         if plan is None:
             raise RuntimeError("Planner did not produce a plan.")
 
-        memory.log("executor", "Generating first draft.")
+        memory.log("executor", "Generating first draft based on current best plan.")
         draft = self.executor.generate(
             goal=request.goal,
-            constraints=request.constraints,
-            output_format=config.output_format,
+            constraints=state["constraints"],
+            output_format=request.config.output_format,
             plan_summary=plan.plan_summary,
             subtasks=plan.subtasks,
-            evidence=evidence_used,
+            evidence=state["evidence_used"],
         )
 
         ended_reason = "max_iterations_reached"
+        previous_fault_ids: list[str] = []
+        resolved_fault_ids: set[str] = set()
         for review_iteration in range(1, max_iterations + 1):
-            memory.log("devils_advocate", f"Running quality review iteration {review_iteration}.")
-            review = self.planner.review_output(request.goal, request.constraints, draft)
+            memory.log("devils_advocate", f"Review iteration {review_iteration}: stress-testing draft quality.")
+            review = self.planner.review_output(request.goal, state["constraints"], draft)
             memory.quality_trace.append(review.quality_score)
-            memory.log("quality", f"Quality score={review.quality_score:.2f}")
+            memory.log("quality", f"Quality is {review.quality_score:.2f}; deciding whether to patch.")
+
+            current_fault_ids = [fault.id for fault in review.faults if fault.id]
+            if current_fault_ids and current_fault_ids == previous_fault_ids:
+                ended_reason = "deadlock_guard_triggered"
+                memory.log(
+                    "deadlock_guard",
+                    "Same fault IDs repeated in consecutive review cycles. Stopping to prevent ping-pong loop.",
+                )
+                break
+
+            repeated_resolved = [fault_id for fault_id in current_fault_ids if fault_id in resolved_fault_ids]
+            if repeated_resolved:
+                memory.log(
+                    "deadlock_guard",
+                    f"Previously seen fault IDs reappeared: {', '.join(repeated_resolved[:3])}. Monitoring for deadlock.",
+                )
 
             if review.quality_score >= quality_threshold:
                 ended_reason = "quality_threshold_met"
-                memory.log("gate", "Quality threshold met. Finishing run.")
+                memory.log("gate", "Quality target reached. Finalizing output.")
                 break
 
             if not review.faults:
                 ended_reason = "no_faults_but_low_score"
-                memory.log("gate", "No actionable faults returned. Finishing run.")
+                memory.log("gate", "No clear fixes found. Returning best available output.")
                 break
 
-            memory.log("executor_patch", f"Applying {len(review.faults)} targeted patches.")
+            memory.log("executor_patch", f"I think targeted fixes are better than full rewrite. Applying {len(review.faults)} patches.")
             draft = self.executor.patch(draft, review.faults)
+            resolved_fault_ids.update(current_fault_ids)
+            previous_fault_ids = current_fault_ids
 
         memory.assumptions.append("Prototype assumption: retrieval credibility uses a heuristic fixed baseline.")
-        memory.log("session_end", "FORGE run completed.")
+        memory.log("session_end", "Run complete. Delivering output, assumptions, and logs.")
 
         return RunResponse(
             final_output=draft,
@@ -97,5 +195,130 @@ class ForgeOrchestrator:
             ended_reason=ended_reason,
             confidence_trace=memory.confidence_trace,
             quality_trace=memory.quality_trace,
-            evidence_used=evidence_used,
+            evidence_used=state["evidence_used"],
         )
+
+    def run(self, request: RunRequest) -> RunResponse:
+        strategy_threshold, quality_threshold, max_iterations = self._thresholds(request)
+
+        state = {
+            "request": request,
+            "goal": request.goal,
+            "constraints": list(request.constraints),
+            "memory": SessionMemory(constraint_pinboard=list(request.constraints)),
+            "evidence_used": [],
+            "plan": None,
+            "iteration": 1,
+            "strategy_threshold": strategy_threshold,
+            "quality_threshold": quality_threshold,
+            "max_iterations": max_iterations,
+        }
+
+        state["memory"].log("session_start", "Run started. Reading goal and constraints.")
+
+        for iteration in range(1, max_iterations + 1):
+            state["iteration"] = iteration
+            self._planner_step(state)
+
+            if state["plan"].confidence >= strategy_threshold:
+                state["memory"].log("gate", "Plan looks reliable enough. Moving to execution.")
+                break
+
+            state["memory"].log("gate", "Plan confidence is low. Rerouting to another planning pass.")
+
+        return self._phase2_execute(state)
+
+    def start_interactive(self, request: RunRequest) -> InteractiveRunResponse:
+        strategy_threshold, quality_threshold, max_iterations = self._thresholds(request)
+        session_id = str(uuid4())
+
+        state = {
+            "request": request,
+            "goal": request.goal,
+            "constraints": list(request.constraints),
+            "memory": SessionMemory(constraint_pinboard=list(request.constraints)),
+            "evidence_used": [],
+            "plan": None,
+            "iteration": 1,
+            "strategy_threshold": strategy_threshold,
+            "quality_threshold": quality_threshold,
+            "max_iterations": max_iterations,
+            "source_priority": "",
+            "conflict_domains": [],
+        }
+
+        state["memory"].log("session_start", "Guided run started. I will ask for your input during planning.")
+        self._planner_step(state)
+
+        if state["iteration"] >= state["max_iterations"]:
+            state["memory"].log("gate", "Final planning iteration completed. Moving to execution.")
+            result = self._phase2_execute(state)
+            return InteractiveRunResponse(status="completed", session_id=session_id, result=result)
+
+        self.interactive_sessions[session_id] = state
+
+        question = self._build_question(state)
+        state["memory"].log("interactive", question)
+        return InteractiveRunResponse(
+            status="needs_input",
+            session_id=session_id,
+            question=question,
+            note="Reply with your suggestion or click Skip to continue with current plan.",
+        )
+
+    def continue_interactive(self, session_id: str, user_comment: str | None, skip: bool) -> InteractiveRunResponse:
+        if session_id not in self.interactive_sessions:
+            raise RuntimeError("Interactive session not found or expired.")
+
+        state = self.interactive_sessions[session_id]
+        conflict_domains = state.get("conflict_domains", [])
+        comment_text = (user_comment or "").strip()
+
+        if conflict_domains and not state.get("source_priority"):
+            chosen = self._extract_priority_from_comment(comment_text, conflict_domains)
+            if chosen:
+                state["source_priority"] = chosen
+                state["memory"].log("source_priority", f"User selected source priority: {chosen}")
+            elif skip and conflict_domains:
+                fallback = conflict_domains[0]
+                state["source_priority"] = fallback
+                state["memory"].log("source_priority", f"No source selected. Using default priority: {fallback}")
+
+        max_reached = state["iteration"] >= state["max_iterations"]
+
+        if skip:
+            state["memory"].log("user_input", "User skipped clarification. Proceeding with current method.")
+        else:
+            if comment_text:
+                state["constraints"].append(comment_text)
+                state["memory"].constraint_pinboard.append(comment_text)
+                state["memory"].log("user_input", f"User clarification received: {comment_text}")
+            else:
+                state["memory"].log("user_input", "No new clarification provided. Proceeding.")
+
+        if max_reached:
+            state["memory"].log("gate", "Reached final planning iteration. Moving to execution.")
+            result = self._phase2_execute(state)
+            self.interactive_sessions.pop(session_id, None)
+            return InteractiveRunResponse(status="completed", session_id=session_id, result=result)
+
+        state["iteration"] += 1
+        self._planner_step(state)
+
+        if state["iteration"] >= state["max_iterations"]:
+            state["memory"].log("gate", "Final planning iteration completed. Moving to execution.")
+            result = self._phase2_execute(state)
+            self.interactive_sessions.pop(session_id, None)
+            return InteractiveRunResponse(status="completed", session_id=session_id, result=result)
+
+        question = self._build_question(state)
+        state["memory"].log("interactive", question)
+        return InteractiveRunResponse(
+            status="needs_input",
+            session_id=session_id,
+            question=question,
+            note="Reply with your suggestion or click Skip to continue with current plan.",
+        )
+
+    def cancel_interactive(self, session_id: str) -> None:
+        self.interactive_sessions.pop(session_id, None)

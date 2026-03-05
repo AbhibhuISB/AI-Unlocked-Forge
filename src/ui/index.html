@@ -84,6 +84,12 @@
       gap: 10px;
     }
 
+    .row3-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 10px;
+    }
+
     button {
       background: #2563eb;
       border-color: #1d4ed8;
@@ -104,6 +110,62 @@
       border-radius: 8px;
       padding: 10px;
       min-height: 80px;
+    }
+
+    .scroll-box {
+      max-height: 420px;
+      overflow-y: auto;
+    }
+
+    .header-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .header-row h2 {
+      margin: 0;
+    }
+
+    .secondary-btn {
+      width: auto;
+      min-width: 140px;
+      padding: 8px 10px;
+      background: #1f2a44;
+      border-color: #334155;
+      font-size: 13px;
+    }
+
+    .qa-box {
+      margin-top: 12px;
+      background: #0b1226;
+      border: 1px solid #23335d;
+      border-radius: 8px;
+      padding: 10px;
+    }
+
+    .bubble {
+      background: #16213f;
+      border: 1px solid #2d3f70;
+      border-radius: 10px;
+      padding: 10px;
+      margin-bottom: 8px;
+      font-size: 13px;
+      color: #dbe6ff;
+      white-space: pre-wrap;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    .danger-btn {
+      width: auto;
+      min-width: 140px;
+      background: #7f1d1d;
+      border-color: #991b1b;
     }
 
     .ok {
@@ -175,7 +237,7 @@ Include explicit assumptions</textarea>
           </div>
         </div>
 
-        <div class="row2">
+        <div class="row3-actions">
           <div>
             <label>Output Format</label>
             <select id="format">
@@ -186,7 +248,11 @@ Include explicit assumptions</textarea>
           </div>
           <div>
             <label>&nbsp;</label>
-            <button id="runBtn">Run FORGE</button>
+            <button id="quickRunBtn">Quick Run</button>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="guidedRunBtn">Guided Run</button>
           </div>
         </div>
       </div>
@@ -195,20 +261,36 @@ Include explicit assumptions</textarea>
         <h2>Status</h2>
         <div><span class="pill">Backend</span><span id="health" class="muted">Checking...</span></div>
         <div style="margin-top: 8px;"><span class="pill">Run</span><span id="runStatus" class="muted">Idle</span></div>
+        <div style="margin-top: 8px;"><span class="pill">Mode</span><span id="runMode" class="muted">-</span></div>
+        <div style="margin-top: 8px;"><button id="interruptBtn" class="danger-btn hidden">Interrupt</button></div>
         <div style="margin-top: 8px;"><span class="pill">Ended Reason</span><span id="ended" class="muted">-</span>
         </div>
         <div style="margin-top: 8px;"><span class="pill">Iterations</span><span id="iters" class="muted">-</span></div>
+
+        <div id="guidedPanel" class="qa-box hidden">
+          <div class="muted" style="margin-bottom: 6px;">Planner clarification</div>
+          <div id="plannerQuestion" class="bubble">No question yet.</div>
+          <label>Your comment (optional)</label>
+          <textarea id="guidedComment" placeholder="Type your suggestion, constraint, or direction..."></textarea>
+          <div class="row2" style="margin-top: 8px;">
+            <button id="guidedSubmitBtn">Submit</button>
+            <button id="guidedSkipBtn" class="secondary-btn">Skip</button>
+          </div>
+        </div>
       </div>
     </div>
 
     <div class="grid full">
       <div class="card">
         <h2>Activity Log</h2>
-        <div id="activity" class="mono"></div>
+        <div id="activity" class="mono scroll-box"></div>
       </div>
       <div class="card">
-        <h2>Output</h2>
-        <div id="output" class="mono"></div>
+        <div class="header-row">
+          <h2>Output</h2>
+          <button id="openOutputBtn" class="secondary-btn" disabled>Open In New Tab</button>
+        </div>
+        <div id="output" class="mono scroll-box"></div>
       </div>
     </div>
 
@@ -227,13 +309,27 @@ Include explicit assumptions</textarea>
   <script>
     const healthEl = document.getElementById('health');
     const runStatusEl = document.getElementById('runStatus');
+    const runModeEl = document.getElementById('runMode');
     const endedEl = document.getElementById('ended');
     const itersEl = document.getElementById('iters');
     const activityEl = document.getElementById('activity');
     const outputEl = document.getElementById('output');
     const confidenceEl = document.getElementById('confidence');
     const qualityTraceEl = document.getElementById('qualityTrace');
-    const runBtn = document.getElementById('runBtn');
+    const quickRunBtn = document.getElementById('quickRunBtn');
+    const guidedRunBtn = document.getElementById('guidedRunBtn');
+    const openOutputBtn = document.getElementById('openOutputBtn');
+    const guidedPanel = document.getElementById('guidedPanel');
+    const plannerQuestionEl = document.getElementById('plannerQuestion');
+    const guidedCommentEl = document.getElementById('guidedComment');
+    const guidedSubmitBtn = document.getElementById('guidedSubmitBtn');
+    const guidedSkipBtn = document.getElementById('guidedSkipBtn');
+    const interruptBtn = document.getElementById('interruptBtn');
+
+    let latestOutput = '';
+    let interactiveSessionId = '';
+    let activeController = null;
+    let activeMode = '';
 
     async function checkHealth() {
       try {
@@ -255,18 +351,66 @@ Include explicit assumptions</textarea>
       activityEl.textContent = items.map((x) => `[${x.step}] ${x.message}`).join('\n');
     }
 
-    async function runForge() {
-      runBtn.disabled = true;
+    function resetPanels() {
       runStatusEl.textContent = 'Running...';
       runStatusEl.className = 'muted';
       outputEl.textContent = '';
+      latestOutput = '';
+      openOutputBtn.disabled = true;
       activityEl.textContent = '';
       confidenceEl.textContent = '';
       qualityTraceEl.textContent = '';
       endedEl.textContent = '-';
       itersEl.textContent = '-';
+    }
 
-      const payload = {
+    function setButtonsDisabled(disabled) {
+      quickRunBtn.disabled = disabled;
+      guidedRunBtn.disabled = disabled;
+      guidedSubmitBtn.disabled = disabled;
+      guidedSkipBtn.disabled = disabled;
+    }
+
+    function setGuidedVisible(visible) {
+      if (visible) {
+        guidedPanel.classList.remove('hidden');
+      } else {
+        guidedPanel.classList.add('hidden');
+      }
+    }
+
+    function setGuidedInputEnabled(enabled) {
+      guidedCommentEl.disabled = !enabled;
+      guidedSubmitBtn.disabled = !enabled;
+      guidedSkipBtn.disabled = !enabled;
+    }
+
+    function setInterruptVisible(visible) {
+      if (visible) {
+        interruptBtn.classList.remove('hidden');
+      } else {
+        interruptBtn.classList.add('hidden');
+      }
+    }
+
+    function beginRequest(modeLabel) {
+      if (activeController) {
+        activeController.abort();
+      }
+      activeController = new AbortController();
+      activeMode = modeLabel;
+      setInterruptVisible(true);
+      return activeController.signal;
+    }
+
+    function endRequest() {
+      activeController = null;
+      activeMode = '';
+      setInterruptVisible(!!interactiveSessionId);
+    }
+
+    function buildPayload() {
+      return {
         goal: document.getElementById('goal').value.trim(),
         constraints: document.getElementById('constraints').value.split('\n').map(s => s.trim()).filter(Boolean),
         config: {
@@ -276,12 +420,40 @@ Include explicit assumptions</textarea>
           output_format: document.getElementById('format').value
         }
       };
+    }
+
+    function renderFinal(data) {
+      runStatusEl.textContent = 'Completed';
+      runStatusEl.className = 'ok';
+      endedEl.textContent = data.ended_reason || '-';
+      itersEl.textContent = String(data.iterations ?? '-');
+      renderActivity(data.activity_log || []);
+      latestOutput = data.final_output || '';
+      outputEl.textContent = latestOutput;
+      openOutputBtn.disabled = !latestOutput;
+      confidenceEl.textContent = JSON.stringify(data.confidence_trace || [], null, 2);
+      qualityTraceEl.textContent = JSON.stringify(data.quality_trace || [], null, 2);
+      guidedPanel.classList.add('hidden');
+      interactiveSessionId = '';
+    }
+
+    async function runQuick() {
+      runModeEl.textContent = 'Quick Run';
+      interactiveSessionId = '';
+      setGuidedVisible(false);
+      setGuidedInputEnabled(false);
+      setButtonsDisabled(true);
+      resetPanels();
+
+      const payload = buildPayload();
+      const signal = beginRequest('quick');
 
       try {
         const res = await fetch('/run', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
+          body: JSON.stringify(payload),
+          signal
         });
 
         if (!res.ok) {
@@ -289,28 +461,208 @@ Include explicit assumptions</textarea>
           runStatusEl.textContent = `Error ${res.status}`;
           runStatusEl.className = 'err';
           outputEl.textContent = errText;
+          latestOutput = errText;
+          openOutputBtn.disabled = false;
           return;
         }
 
         const data = await res.json();
-        runStatusEl.textContent = 'Completed';
-        runStatusEl.className = 'ok';
-        endedEl.textContent = data.ended_reason || '-';
-        itersEl.textContent = String(data.iterations ?? '-');
-        renderActivity(data.activity_log || []);
-        outputEl.textContent = data.final_output || '';
-        confidenceEl.textContent = JSON.stringify(data.confidence_trace || [], null, 2);
-        qualityTraceEl.textContent = JSON.stringify(data.quality_trace || [], null, 2);
+        renderFinal(data);
       } catch (e) {
-        runStatusEl.textContent = 'Network error';
-        runStatusEl.className = 'err';
-        outputEl.textContent = String(e);
+        if (e?.name === 'AbortError') {
+          runStatusEl.textContent = 'Interrupted';
+          runStatusEl.className = 'muted';
+          outputEl.textContent = 'Run interrupted by user.';
+        } else {
+          runStatusEl.textContent = 'Network error';
+          runStatusEl.className = 'err';
+          latestOutput = String(e);
+          outputEl.textContent = latestOutput;
+          openOutputBtn.disabled = false;
+        }
       } finally {
-        runBtn.disabled = false;
+        setButtonsDisabled(false);
+        endRequest();
       }
     }
 
-    runBtn.addEventListener('click', runForge);
+    async function runGuidedStart() {
+      runModeEl.textContent = 'Guided Run';
+      resetPanels();
+      setButtonsDisabled(true);
+      setGuidedVisible(true);
+      setGuidedInputEnabled(false);
+      plannerQuestionEl.textContent = 'Planner is preparing first clarification...';
+
+      const payload = buildPayload();
+      const signal = beginRequest('guided');
+
+      try {
+        const res = await fetch('/run/interactive/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal
+        });
+
+        if (!res.ok) {
+          const errText = await res.text();
+          runStatusEl.textContent = `Error ${res.status}`;
+          runStatusEl.className = 'err';
+          outputEl.textContent = errText;
+          latestOutput = errText;
+          openOutputBtn.disabled = false;
+          setGuidedVisible(false);
+          setGuidedInputEnabled(false);
+          return;
+        }
+
+        const data = await res.json();
+        interactiveSessionId = data.session_id || '';
+
+        if (data.status === 'completed' && data.result) {
+          renderFinal(data.result);
+          return;
+        }
+
+        runStatusEl.textContent = 'Waiting for your input';
+        runStatusEl.className = 'muted';
+        plannerQuestionEl.textContent = data.question || 'Please provide clarification.';
+        setGuidedInputEnabled(true);
+        setInterruptVisible(true);
+      } catch (e) {
+        if (e?.name === 'AbortError') {
+          runStatusEl.textContent = 'Interrupted';
+          runStatusEl.className = 'muted';
+          outputEl.textContent = 'Guided run interrupted by user.';
+          setGuidedVisible(false);
+        } else {
+          runStatusEl.textContent = 'Network error';
+          runStatusEl.className = 'err';
+          outputEl.textContent = String(e);
+        }
+      } finally {
+        setButtonsDisabled(false);
+        endRequest();
+      }
+    }
+
+    async function runGuidedContinue(skip) {
+      if (!interactiveSessionId) return;
+      setButtonsDisabled(true);
+      setGuidedInputEnabled(false);
+      runStatusEl.textContent = 'Processing your input...';
+      runStatusEl.className = 'muted';
+      const signal = beginRequest('guided');
+
+      const body = {
+        session_id: interactiveSessionId,
+        user_comment: skip ? '' : guidedCommentEl.value.trim(),
+        skip: !!skip
+      };
+
+      try {
+        const res = await fetch('/run/interactive/continue', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal
+        });
+
+        if (!res.ok) {
+          const errText = await res.text();
+          runStatusEl.textContent = `Error ${res.status}`;
+          runStatusEl.className = 'err';
+          outputEl.textContent = errText;
+          latestOutput = errText;
+          openOutputBtn.disabled = false;
+          setGuidedVisible(false);
+          setGuidedInputEnabled(false);
+          interactiveSessionId = '';
+          return;
+        }
+
+        const data = await res.json();
+        guidedCommentEl.value = '';
+
+        if (data.status === 'completed' && data.result) {
+          renderFinal(data.result);
+          return;
+        }
+
+        runStatusEl.textContent = 'Waiting for your input';
+        runStatusEl.className = 'muted';
+        plannerQuestionEl.textContent = data.question || 'Please provide clarification.';
+        setGuidedInputEnabled(true);
+        setInterruptVisible(true);
+      } catch (e) {
+        if (e?.name === 'AbortError') {
+          runStatusEl.textContent = 'Interrupted';
+          runStatusEl.className = 'muted';
+          outputEl.textContent = 'Guided run interrupted by user.';
+          setGuidedVisible(false);
+          interactiveSessionId = '';
+        } else {
+          runStatusEl.textContent = 'Network error';
+          runStatusEl.className = 'err';
+          outputEl.textContent = String(e);
+        }
+      } finally {
+        setButtonsDisabled(false);
+        endRequest();
+      }
+    }
+
+    async function interruptRun() {
+      if (activeController) {
+        activeController.abort();
+      }
+
+      if (interactiveSessionId) {
+        try {
+          await fetch('/run/interactive/cancel', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: interactiveSessionId })
+          });
+        } catch (_) {
+        }
+      }
+
+      interactiveSessionId = '';
+      setGuidedVisible(false);
+      setGuidedInputEnabled(false);
+      runStatusEl.textContent = 'Interrupted';
+      runStatusEl.className = 'muted';
+      setInterruptVisible(false);
+    }
+
+    function openOutputInNewTab() {
+      if (!latestOutput) return;
+      const escaped = latestOutput
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;');
+
+      const html = `<!doctype html>
+<html><head><meta charset="UTF-8"><title>FORGE Output</title>
+<style>body{font-family:Inter,Segoe UI,Arial,sans-serif;padding:20px;line-height:1.4;background:#0b1020;color:#e5e7eb}pre{white-space:pre-wrap;background:#0b1226;border:1px solid #23335d;border-radius:8px;padding:14px}</style>
+</head><body><h2>FORGE Output</h2><pre>${escaped}</pre></body></html>`;
+
+      const tab = window.open('', '_blank');
+      if (!tab) return;
+      tab.document.write(html);
+      tab.document.close();
+    }
+
+    quickRunBtn.addEventListener('click', runQuick);
+    guidedRunBtn.addEventListener('click', runGuidedStart);
+    guidedSubmitBtn.addEventListener('click', () => runGuidedContinue(false));
+    guidedSkipBtn.addEventListener('click', () => runGuidedContinue(true));
+    interruptBtn.addEventListener('click', interruptRun);
+    openOutputBtn.addEventListener('click', openOutputInNewTab);
+    setGuidedVisible(false);
+    setGuidedInputEnabled(false);
     checkHealth();
   </script>
 </body>
