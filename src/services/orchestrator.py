@@ -146,6 +146,7 @@ class ForgeOrchestrator:
 
         ended_reason = "max_iterations_reached"
         previous_fault_ids: list[str] = []
+        fault_signature_history: list[tuple[str, ...]] = []
         resolved_fault_ids: set[str] = set()
         for review_iteration in range(1, max_iterations + 1):
             memory.log("devils_advocate", f"Review iteration {review_iteration}: stress-testing draft quality.")
@@ -154,11 +155,26 @@ class ForgeOrchestrator:
             memory.log("quality", f"Quality is {review.quality_score:.2f}; deciding whether to patch.")
 
             current_fault_ids = [fault.id for fault in review.faults if fault.id]
+            current_signature = tuple(sorted(set(current_fault_ids)))
             if current_fault_ids and current_fault_ids == previous_fault_ids:
                 ended_reason = "deadlock_guard_triggered"
                 memory.log(
                     "deadlock_guard",
                     "Same fault IDs repeated in consecutive review cycles. Stopping to prevent ping-pong loop.",
+                )
+                break
+
+            if (
+                current_signature
+                and len(fault_signature_history) >= 3
+                and current_signature == fault_signature_history[-2]
+                and fault_signature_history[-1] == fault_signature_history[-3]
+                and current_signature != fault_signature_history[-1]
+            ):
+                ended_reason = "deadlock_guard_triggered"
+                memory.log(
+                    "deadlock_guard",
+                    "Alternating fault pattern detected across review cycles. Stopping to prevent ping-pong loop.",
                 )
                 break
 
@@ -183,6 +199,8 @@ class ForgeOrchestrator:
             draft = self.executor.patch(draft, review.faults)
             resolved_fault_ids.update(current_fault_ids)
             previous_fault_ids = current_fault_ids
+            if current_signature:
+                fault_signature_history.append(current_signature)
 
         memory.assumptions.append("Prototype assumption: retrieval credibility uses a heuristic fixed baseline.")
         memory.log("session_end", "Run complete. Delivering output, assumptions, and logs.")
