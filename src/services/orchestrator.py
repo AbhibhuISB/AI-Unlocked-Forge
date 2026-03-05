@@ -15,7 +15,14 @@ from ..state.memory import SessionMemory
 
 
 class ForgeOrchestrator:
+    """Coordinate Planner/Retriever/Executor into quick and guided workflows.
+
+    Why: Central orchestration enforces shared thresholds, memory/logging semantics,
+    and safety guards across all run modes.
+    """
+
     def __init__(self) -> None:
+        """Initialize dependent agents/clients and in-memory guided session store."""
         self.llm = LLMClient()
         self.search = SearchClient()
         self.planner = PlannerAgent(self.llm)
@@ -24,6 +31,10 @@ class ForgeOrchestrator:
         self.interactive_sessions: Dict[str, dict] = {}
 
     def _thresholds(self, request: RunRequest) -> Tuple[float, float, int]:
+        """Resolve runtime thresholds from request config with env-based defaults.
+
+        Why: Supports per-request tuning while preserving sensible global defaults.
+        """
         config = request.config
         strategy_threshold = config.strategy_threshold or float(os.getenv("DEFAULT_STRATEGY_THRESHOLD", "0.8"))
         quality_threshold = config.quality_threshold or float(os.getenv("DEFAULT_QUALITY_THRESHOLD", "0.85"))
@@ -31,6 +42,11 @@ class ForgeOrchestrator:
         return strategy_threshold, quality_threshold, max_iterations
 
     def _planner_step(self, state: dict) -> None:
+        """Run one planning iteration, including optional retrieval/conflict handling.
+
+        Why: Encapsulates phase-1 behavior so quick and guided modes share identical
+        planning semantics.
+        """
         state["memory"].log("planner", f"Planning iteration {state['iteration']}: building task strategy.")
         plan = self.planner.build_plan(
             goal=state["goal"],
@@ -57,6 +73,12 @@ class ForgeOrchestrator:
             self._apply_source_priority(state)
 
     def _detect_conflict_domains(self, evidence) -> list[str]:
+        """Heuristically detect potentially conflicting source domains.
+
+        What: Looks for opposite negation patterns across snippets and returns domains
+        involved in the first detected conflict pair.
+        Why: Prompts the user for source priority when evidence quality appears mixed.
+        """
         if len(evidence) < 2:
             return []
 
@@ -81,6 +103,11 @@ class ForgeOrchestrator:
         return []
 
     def _extract_priority_from_comment(self, comment: str, conflict_domains: list[str]) -> str | None:
+        """Extract a preferred source domain from free-form user text.
+
+        Why: Keeps guided interaction flexible while still mapping to deterministic
+        evidence-ordering behavior.
+        """
         text = (comment or "").lower()
         for domain in conflict_domains:
             if domain and domain in text:
@@ -88,6 +115,11 @@ class ForgeOrchestrator:
         return None
 
     def _apply_source_priority(self, state: dict) -> None:
+        """Reorder evidence so preferred-domain sources are evaluated first.
+
+        Why: Planner/executor prompts are order-sensitive; placing trusted sources first
+        biases synthesis toward user-selected evidence.
+        """
         priority = (state.get("source_priority") or "").strip().lower()
         evidence = state.get("evidence_used", [])
         if not priority or not evidence:
@@ -107,6 +139,10 @@ class ForgeOrchestrator:
             state["memory"].log("source_priority", f"Prioritizing evidence from {priority}.")
 
     def _build_question(self, state: dict) -> str:
+        """Create the next guided-mode question from current planning context.
+
+        Why: Keeps user prompts contextual (source conflicts first, then strategy clarifications).
+        """
         plan = state["plan"]
 
         conflict_domains = state.get("conflict_domains", [])
@@ -125,6 +161,12 @@ class ForgeOrchestrator:
         return "I can proceed with the current approach. Do you want to add or change any constraints before I continue?"
 
     def _phase2_execute(self, state: dict) -> RunResponse:
+        """Execute the draft-and-review loop until quality target or stop condition.
+
+        What: Generates initial output, reviews quality, applies delta patches, and
+        enforces deadlock protections.
+        Why: Iterative patching improves output quality while avoiding unbounded loops.
+        """
         request = state["request"]
         memory = state["memory"]
         plan = state["plan"]
@@ -157,6 +199,7 @@ class ForgeOrchestrator:
             current_fault_ids = [fault.id for fault in review.faults if fault.id]
             current_signature = tuple(sorted(set(current_fault_ids)))
             if current_fault_ids and current_fault_ids == previous_fault_ids:
+                # Guard 1: identical consecutive fault sets imply no effective progress.
                 ended_reason = "deadlock_guard_triggered"
                 memory.log(
                     "deadlock_guard",
@@ -171,6 +214,7 @@ class ForgeOrchestrator:
                 and fault_signature_history[-1] == fault_signature_history[-3]
                 and current_signature != fault_signature_history[-1]
             ):
+                # Guard 2: alternating signatures (A-B-A-B) indicate ping-pong behavior.
                 ended_reason = "deadlock_guard_triggered"
                 memory.log(
                     "deadlock_guard",
@@ -217,6 +261,10 @@ class ForgeOrchestrator:
         )
 
     def run(self, request: RunRequest) -> RunResponse:
+        """Run FORGE in autonomous mode (no mid-run user intervention).
+
+        Why: Serves quick-run UX and API clients requiring a single synchronous call.
+        """
         strategy_threshold, quality_threshold, max_iterations = self._thresholds(request)
 
         state = {
@@ -247,6 +295,10 @@ class ForgeOrchestrator:
         return self._phase2_execute(state)
 
     def start_interactive(self, request: RunRequest) -> InteractiveRunResponse:
+        """Start a guided session and return either a question or final result.
+
+        Why: Enables human-in-the-loop planning while preserving the same core pipeline.
+        """
         strategy_threshold, quality_threshold, max_iterations = self._thresholds(request)
         session_id = str(uuid4())
 
@@ -285,6 +337,10 @@ class ForgeOrchestrator:
         )
 
     def continue_interactive(self, session_id: str, user_comment: str | None, skip: bool) -> InteractiveRunResponse:
+        """Advance a guided session using user feedback or explicit skip.
+
+        Why: Keeps interactive state transitions explicit and auditable in activity logs.
+        """
         if session_id not in self.interactive_sessions:
             raise RuntimeError("Interactive session not found or expired.")
 
@@ -339,4 +395,8 @@ class ForgeOrchestrator:
         )
 
     def cancel_interactive(self, session_id: str) -> None:
+        """Cancel and delete an active guided session by ID.
+
+        Why: Frees in-memory state and gives users deterministic interruption control.
+        """
         self.interactive_sessions.pop(session_id, None)

@@ -14,7 +14,18 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class LLMClient:
+    """Unified text/JSON completion client across Azure OpenAI and Foundry endpoints.
+
+    Why: The prototype must run in multiple Azure endpoint shapes; this abstraction
+    centralizes provider differences and fallback logic away from agents.
+    """
+
     def __init__(self) -> None:
+        """Initialize provider-specific clients and endpoint mode metadata.
+
+        What: Supports classic Azure OpenAI resources and Foundry project endpoints.
+        Why: Real deployments vary by tenant setup; this keeps runtime configuration flexible.
+        """
         provider = (os.getenv("LLM_PROVIDER", "azure") or "azure").strip().lower()
         self.provider = provider
         self.azure_mode = ""
@@ -51,6 +62,10 @@ class LLMClient:
             self.model = (os.getenv("OPENAI_MODEL", "gpt-4o-mini") or "gpt-4o-mini").strip()
 
     def complete_text(self, system_prompt: str, user_prompt: str) -> str:
+        """Return model-generated text for a system/user prompt pair.
+
+        Why: Provides one call surface for agents regardless of underlying provider API.
+        """
         if self.provider != "azure":
             response = self.client.responses.create(
                 model=self.model,
@@ -74,6 +89,7 @@ class LLMClient:
                 )
                 return response.output_text
             except Exception as error:
+                # Some Azure deployments expose chat.completions but not responses.
                 if "404" not in str(error):
                     raise
 
@@ -94,6 +110,11 @@ class LLMClient:
         return self._complete_text_foundry(system_prompt=system_prompt, user_prompt=user_prompt)
 
     def _complete_text_foundry(self, system_prompt: str, user_prompt: str) -> str:
+        """Call Azure AI Foundry project chat completions with API-version fallback.
+
+        Why: Foundry availability can differ by region/version; trying a small ordered
+        set of versions improves compatibility without user intervention.
+        """
         url = f"{self.azure_endpoint}/models/chat/completions"
         payload = {
             "model": self.model,
@@ -159,11 +180,17 @@ class LLMClient:
         raise RuntimeError(f"Foundry endpoint call failed for all API versions. Last error: {last_error}")
 
     def complete_json(self, system_prompt: str, user_prompt: str, schema: Type[T]) -> T:
+        """Generate structured output and validate it against a Pydantic schema.
+
+        Why: Agent control loops depend on typed outputs; schema validation protects
+        orchestration from malformed model text.
+        """
         raw = self.complete_text(system_prompt=system_prompt, user_prompt=user_prompt)
         try:
             parsed: Any = json.loads(raw)
             return schema.model_validate(parsed)
         except Exception:
+            # Resiliency fallback for responses that include commentary around JSON.
             start = raw.find("{")
             end = raw.rfind("}")
             if start >= 0 and end > start:

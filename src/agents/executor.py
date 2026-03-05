@@ -8,7 +8,14 @@ from ..services.llm_client import LLMClient
 
 
 class ExecutorAgent:
+    """Generate drafts and apply targeted revisions from review faults.
+
+    Why: Separating execution from planning/review enables iterative refinement
+    without collapsing all concerns into one large prompt.
+    """
+
     def __init__(self, llm: LLMClient) -> None:
+        """Store shared LLM client for draft generation and patching."""
         self.llm = llm
 
     def generate(
@@ -20,6 +27,11 @@ class ExecutorAgent:
         subtasks: List[str],
         evidence: List[EvidenceItem],
     ) -> str:
+        """Create the first full draft from strategy, constraints, and evidence.
+
+        Why: Produces a concrete artifact that can be reviewed and patched in the
+        quality loop instead of repeatedly replanning from scratch.
+        """
         prompt = (
             f"Goal:\n{goal}\n\n"
             f"Output format: {output_format}\n\n"
@@ -32,6 +44,11 @@ class ExecutorAgent:
         return self.llm.complete_text(EXECUTOR_PROMPT, prompt)
 
     def patch(self, draft: str, faults: List[Fault]) -> str:
+        """Apply focused fixes to an existing draft using reviewer fault items.
+
+        Why: Delta patching is cheaper and usually more stable than full regeneration
+        when only a subset of quality issues must be corrected.
+        """
         fault_text = "\n".join(
             [f"- [{fault.severity}] {fault.issue} | Patch: {fault.patch_instruction}" for fault in faults]
         )

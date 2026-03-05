@@ -10,18 +10,41 @@ from ..services.llm_client import LLMClient
 
 
 class PlannerAgent:
+    """Generate strategy plans and perform adversarial quality review.
+
+    Why: Splitting planning/review from execution keeps responsibilities explicit and
+    allows independent evolution of planning heuristics (e.g., ToT) versus generation.
+    """
+
     def __init__(self, llm: LLMClient) -> None:
+        """Store shared LLM client used for all planner-side model interactions."""
         self.llm = llm
 
     @staticmethod
     def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
+        """Bound numeric scores to a safe [low, high] interval.
+
+        Why: LLM outputs may drift outside expected ranges; clamping protects gates.
+        """
         return max(low, min(high, value))
 
     @staticmethod
     def _overall(constraint_score: float, feasibility_score: float, risk_penalty: float) -> float:
+        """Compute weighted candidate utility for ToT branch ranking.
+
+        Why: Normalizes path comparison through one scalar score aligned with
+        FORGE priorities (constraints first, feasibility second, risk penalty).
+        """
         return PlannerAgent._clamp(0.55 * constraint_score + 0.35 * feasibility_score - 0.10 * risk_penalty)
 
     def build_plan(self, goal: str, constraints: List[str], pinboard: List[str]) -> PlannerOutput:
+        """Create a planning strategy from goal/constraints using ToT with fallback.
+
+        What: Tries Tree-of-Thoughts path generation, recomputes comparable branch
+        scores, prunes weak paths, and returns the best candidate.
+        Why: Improves robustness over single-shot planning while preserving reliability
+        through a legacy planner fallback if ToT parsing or output quality fails.
+        """
         class _ToTCandidate(BaseModel):
             path_id: str
             plan_summary: str
@@ -88,10 +111,16 @@ class PlannerAgent:
                 confidence=self._clamp(0.5 * selected["confidence"] + 0.5 * selected["overall_score"]),
             )
         except Exception:
+            # Fallback keeps the pipeline operational even if ToT structure is invalid.
             data = self.llm.complete_json(PLANNER_PROMPT, prompt, _PlannerSchema)
             return PlannerOutput(**data.model_dump())
 
     def review_output(self, goal: str, constraints: List[str], draft: str) -> ReviewOutput:
+        """Score draft quality and produce fixable faults.
+
+        Why: The reviewer acts as a devil's advocate gate before expensive retries,
+        enabling targeted patches instead of full rewrites.
+        """
         class _ReviewSchema(BaseModel):
             quality_score: float
             faults: list
