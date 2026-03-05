@@ -20,6 +20,33 @@ It runs as a FastAPI backend with a built-in UI.
 - Delta patch refinement (targeted fixes)
 - UI at `/` to run the pipeline interactively
 
+```mermaid
+flowchart TD
+    A[User Goal + Constraints] --> B{Run Mode}
+    B -->|Quick Run| C[Planner: Build Strategy]
+    B -->|Guided Run| C
+
+    C --> D[Retriever: Gather Evidence]
+    D --> E{Conflicts Found?}
+    E -->|Yes| F[Ask User Source Priority]
+    E -->|No| G[Score Strategy Confidence]
+    F --> G
+
+    G --> H{Confidence >= strategy_threshold?}
+    H -->|No| C
+    H -->|Yes| I[Executor: Generate Draft Output]
+
+    I --> J[Review: Detect Faults]
+    J --> K{Quality >= quality_threshold?}
+    K -->|No| L[Apply Delta Patch Refinement]
+    L --> M{Deadlock Guard Triggered?}
+    M -->|No| J
+    M -->|Yes| N[Return Best Safe Output + Guard Flag]
+    K -->|Yes| O[Return Final Output]
+
+    P[Guided Cancel / Interrupt] -.-> Q[Stop Session Safely]
+```
+
 ### What it uses
 - Python + FastAPI
 - Azure OpenAI (required for LLM calls)
