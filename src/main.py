@@ -1,12 +1,22 @@
 from __future__ import annotations
 
+import json
 import os
+import time
 from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
-from .models import InteractiveCancelRequest, InteractiveContinueRequest, InteractiveRunResponse, RunRequest, RunResponse
+from .models import (
+    InteractiveCancelRequest,
+    InteractiveContinueRequest,
+    InteractiveRunResponse,
+    LiveRunCancelRequest,
+    LiveRunStartResponse,
+    RunRequest,
+    RunResponse,
+)
 from .services.orchestrator import ForgeOrchestrator
 
 
@@ -54,6 +64,83 @@ def run_forge(request: RunRequest) -> RunResponse:
         return orchestrator.run(request)
     except Exception as error:
         raise HTTPException(status_code=503, detail=f"FORGE run failed: {str(error)}") from error
+
+
+@app.post("/run/live/start", response_model=LiveRunStartResponse)
+def run_forge_live_start(request: RunRequest) -> LiveRunStartResponse:
+    """Start a background quick run for live status streaming.
+
+    What:
+        Spawns a live session and returns its session ID.
+    Why:
+        Lets clients subscribe to incremental activity updates while run is in progress.
+    """
+    try:
+        session_id = orchestrator.start_live_run(request)
+        return LiveRunStartResponse(status="started", session_id=session_id)
+    except Exception as error:
+        raise HTTPException(status_code=503, detail=f"FORGE live start failed: {str(error)}") from error
+
+
+@app.get("/run/live/stream/{session_id}")
+def run_forge_live_stream(session_id: str) -> StreamingResponse:
+    """Stream live run events using Server-Sent Events (SSE).
+
+    What:
+        Emits `log`, `done`, or `error` events for the requested live session.
+    Why:
+        Enables low-overhead real-time status UX without polling.
+    """
+
+    def event_stream():
+        cursor = 0
+        while True:
+            try:
+                snapshot = orchestrator.get_live_snapshot(session_id)
+            except Exception as error:
+                payload = json.dumps({"message": str(error)})
+                yield f"event: error\ndata: {payload}\n\n"
+                break
+
+            events = snapshot.get("events", [])
+            while cursor < len(events):
+                payload = json.dumps(events[cursor])
+                yield f"event: log\ndata: {payload}\n\n"
+                cursor += 1
+
+            if snapshot.get("done"):
+                if snapshot.get("error"):
+                    payload = json.dumps({"message": snapshot["error"]})
+                    yield f"event: error\ndata: {payload}\n\n"
+                else:
+                    payload = json.dumps(snapshot.get("result") or {})
+                    yield f"event: done\ndata: {payload}\n\n"
+                break
+
+            time.sleep(0.25)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.post("/run/live/cancel")
+def run_forge_live_cancel(request: LiveRunCancelRequest) -> dict:
+    """Cancel a live quick-run session.
+
+    What:
+        Sets cancellation flag for the given live session.
+    Why:
+        Gives users explicit interrupt control during streaming quick runs.
+    """
+    orchestrator.cancel_live_run(request.session_id)
+    return {"status": "cancelled", "session_id": request.session_id}
 
 
 @app.post("/run/interactive/start", response_model=InteractiveRunResponse)

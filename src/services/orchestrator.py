@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from uuid import uuid4
 from typing import Dict, Tuple
 from urllib.parse import urlparse
@@ -37,6 +38,7 @@ class ForgeOrchestrator:
         self.retriever = RetrieverAgent(self.search)
         self.executor = ExecutorAgent(self.llm)
         self.interactive_sessions: Dict[str, dict] = {}
+        self.live_sessions: Dict[str, dict] = {}
 
     def _thresholds(self, request: RunRequest) -> Tuple[float, float, int]:
         """Resolve effective thresholds for a run.
@@ -290,13 +292,23 @@ class ForgeOrchestrator:
         Why:
             Supports quick-run UX and synchronous API consumers.
         """
+        return self._run_with_memory(request, SessionMemory(constraint_pinboard=list(request.constraints)))
+
+    def _run_with_memory(self, request: RunRequest, memory: SessionMemory) -> RunResponse:
+        """Execute full quick-run flow with supplied memory implementation.
+
+        What:
+            Runs phase-1 planning loop and phase-2 execution loop using caller-provided memory.
+        Why:
+            Enables reuse between synchronous quick run and live-streamed background run.
+        """
         strategy_threshold, quality_threshold, max_iterations = self._thresholds(request)
 
         state = {
             "request": request,
             "goal": request.goal,
             "constraints": list(request.constraints),
-            "memory": SessionMemory(constraint_pinboard=list(request.constraints)),
+            "memory": memory,
             "evidence_used": [],
             "plan": None,
             "iteration": 1,
@@ -318,6 +330,85 @@ class ForgeOrchestrator:
             state["memory"].log("gate", "Plan confidence is low. Rerouting to another planning pass.")
 
         return self._phase2_execute(state)
+
+    def start_live_run(self, request: RunRequest) -> str:
+        """Start a background quick run that emits live activity events.
+
+        What:
+            Creates a live session, spawns a worker thread, and streams log events into session state.
+        Why:
+            Allows UI to display status updates incrementally instead of waiting for final response.
+        """
+        session_id = str(uuid4())
+        session = {
+            "events": [],
+            "result": None,
+            "error": None,
+            "done": False,
+            "cancelled": False,
+            "lock": threading.Lock(),
+        }
+        self.live_sessions[session_id] = session
+
+        def on_log(event) -> None:
+            with session["lock"]:
+                if session["cancelled"]:
+                    raise RuntimeError("Live run cancelled by user.")
+                session["events"].append(event.model_dump())
+
+        def worker() -> None:
+            try:
+                memory = SessionMemory(
+                    constraint_pinboard=list(request.constraints),
+                    on_log=on_log,
+                )
+                result = self._run_with_memory(request, memory)
+                with session["lock"]:
+                    session["result"] = result.model_dump()
+            except Exception as error:
+                with session["lock"]:
+                    session["error"] = str(error)
+            finally:
+                with session["lock"]:
+                    session["done"] = True
+
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+        return session_id
+
+    def get_live_snapshot(self, session_id: str) -> dict:
+        """Return a thread-safe snapshot of live session state.
+
+        What:
+            Exposes events, completion state, result, and error for streaming endpoints.
+        Why:
+            Keeps API layer simple while preserving thread-safety boundaries in orchestration.
+        """
+        if session_id not in self.live_sessions:
+            raise RuntimeError("Live session not found or expired.")
+
+        session = self.live_sessions[session_id]
+        with session["lock"]:
+            return {
+                "events": list(session["events"]),
+                "done": bool(session["done"]),
+                "result": session["result"],
+                "error": session["error"],
+            }
+
+    def cancel_live_run(self, session_id: str) -> None:
+        """Mark a live session as cancelled.
+
+        What:
+            Sets cancellation flag checked on subsequent log emissions.
+        Why:
+            Provides user-triggered interruption semantics for live quick runs.
+        """
+        if session_id not in self.live_sessions:
+            return
+        session = self.live_sessions[session_id]
+        with session["lock"]:
+            session["cancelled"] = True
 
     def start_interactive(self, request: RunRequest) -> InteractiveRunResponse:
         """Start a guided run session.

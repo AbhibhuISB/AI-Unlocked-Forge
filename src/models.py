@@ -178,3 +178,28 @@ class InteractiveRunResponse(BaseModel):
     question: Optional[str] = None
     note: Optional[str] = None
     result: Optional[RunResponse] = None
+
+
+class LiveRunStartResponse(BaseModel):
+    """Represent live-run startup response.
+
+    What:
+        Returns session identifier for a newly spawned background quick run.
+    Why:
+        Allows clients to subscribe to live status stream using the returned session ID.
+    """
+
+    status: Literal["started"]
+    session_id: str
+
+
+class LiveRunCancelRequest(BaseModel):
+    """Represent live-run cancel input.
+
+    What:
+        Identifies a background live-run session to cancel.
+    Why:
+        Provides user-controlled interruption for streamed quick runs.
+    """
+
+    session_id: str

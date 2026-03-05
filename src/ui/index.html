@@ -330,6 +330,9 @@ Include explicit assumptions</textarea>
     let interactiveSessionId = '';
     let activeController = null;
     let activeMode = '';
+    let liveQuickSessionId = '';
+    let liveQuickSource = null;
+    let liveQuickEvents = [];
 
     async function checkHealth() {
       try {
@@ -403,6 +406,13 @@ Include explicit assumptions</textarea>
       return activeController.signal;
     }
 
+    function closeLiveQuickStream() {
+      if (liveQuickSource) {
+        liveQuickSource.close();
+        liveQuickSource = null;
+      }
+    }
+
     function endRequest() {
       activeController = null;
       activeMode = '';
@@ -440,6 +450,9 @@ Include explicit assumptions</textarea>
     async function runQuick() {
       runModeEl.textContent = 'Quick Run';
       interactiveSessionId = '';
+      liveQuickSessionId = '';
+      closeLiveQuickStream();
+      liveQuickEvents = [];
       setGuidedVisible(false);
       setGuidedInputEnabled(false);
       setButtonsDisabled(true);
@@ -449,7 +462,7 @@ Include explicit assumptions</textarea>
       const signal = beginRequest('quick');
 
       try {
-        const res = await fetch('/run', {
+        const res = await fetch('/run/live/start', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
@@ -466,8 +479,64 @@ Include explicit assumptions</textarea>
           return;
         }
 
-        const data = await res.json();
-        renderFinal(data);
+        const startData = await res.json();
+        liveQuickSessionId = startData.session_id || '';
+
+        if (!liveQuickSessionId) {
+          throw new Error('Missing live session ID from server.');
+        }
+
+        runStatusEl.textContent = 'Running (live updates)';
+        runStatusEl.className = 'muted';
+
+        liveQuickSource = new EventSource(`/run/live/stream/${encodeURIComponent(liveQuickSessionId)}`);
+
+        liveQuickSource.addEventListener('log', (event) => {
+          try {
+            const logItem = JSON.parse(event.data);
+            liveQuickEvents.push(logItem);
+            renderActivity(liveQuickEvents);
+          } catch (_) {
+          }
+        });
+
+        liveQuickSource.addEventListener('done', (event) => {
+          try {
+            const data = JSON.parse(event.data || '{}');
+            renderFinal(data);
+          } catch (e) {
+            runStatusEl.textContent = 'Parse error';
+            runStatusEl.className = 'err';
+            outputEl.textContent = String(e);
+          } finally {
+            closeLiveQuickStream();
+            liveQuickSessionId = '';
+            setButtonsDisabled(false);
+            endRequest();
+          }
+        });
+
+        liveQuickSource.addEventListener('error', (event) => {
+          let message = 'Live stream connection error.';
+          try {
+            if (event?.data) {
+              const parsed = JSON.parse(event.data);
+              message = parsed.message || message;
+            }
+          } catch (_) {
+          }
+
+          runStatusEl.textContent = 'Error';
+          runStatusEl.className = 'err';
+          outputEl.textContent = message;
+          latestOutput = message;
+          openOutputBtn.disabled = !latestOutput;
+
+          closeLiveQuickStream();
+          liveQuickSessionId = '';
+          setButtonsDisabled(false);
+          endRequest();
+        });
       } catch (e) {
         if (e?.name === 'AbortError') {
           runStatusEl.textContent = 'Interrupted';
@@ -480,7 +549,6 @@ Include explicit assumptions</textarea>
           outputEl.textContent = latestOutput;
           openOutputBtn.disabled = false;
         }
-      } finally {
         setButtonsDisabled(false);
         endRequest();
       }
@@ -617,6 +685,20 @@ Include explicit assumptions</textarea>
       if (activeController) {
         activeController.abort();
       }
+
+      if (liveQuickSessionId) {
+        try {
+          await fetch('/run/live/cancel', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: liveQuickSessionId })
+          });
+        } catch (_) {
+        }
+      }
+
+      closeLiveQuickStream();
+      liveQuickSessionId = '';
 
       if (interactiveSessionId) {
         try {
