@@ -10,40 +10,54 @@ from ..services.llm_client import LLMClient
 
 
 class PlannerAgent:
-    """Generate strategy plans and perform adversarial quality review.
+    """Plan strategy and review output quality.
 
-    Why: Splitting planning/review from execution keeps responsibilities explicit and
-    allows independent evolution of planning heuristics (e.g., ToT) versus generation.
+    What:
+        Provides plan generation (including ToT selection) and devil's-advocate review.
+    Why:
+        Separating planning/review from execution keeps responsibilities clear and extensible.
     """
 
     def __init__(self, llm: LLMClient) -> None:
-        """Store shared LLM client used for all planner-side model interactions."""
+        """Initialize planner dependencies.
+
+        What:
+            Stores a shared LLM client used by planning and review calls.
+        Why:
+            Centralizes model access and keeps the agent easy to test and reuse.
+        """
         self.llm = llm
 
     @staticmethod
     def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
-        """Bound numeric scores to a safe [low, high] interval.
+        """Clamp a score into a bounded interval.
 
-        Why: LLM outputs may drift outside expected ranges; clamping protects gates.
+        What:
+            Restricts numeric values to `[low, high]`.
+        Why:
+            Protects downstream threshold gates from malformed or drifted model scores.
         """
         return max(low, min(high, value))
 
     @staticmethod
     def _overall(constraint_score: float, feasibility_score: float, risk_penalty: float) -> float:
-        """Compute weighted candidate utility for ToT branch ranking.
+        """Compute weighted utility for ToT candidate ranking.
 
-        Why: Normalizes path comparison through one scalar score aligned with
-        FORGE priorities (constraints first, feasibility second, risk penalty).
+        What:
+            Combines constraint, feasibility, and risk into one comparable score.
+        Why:
+            Enables deterministic branch selection aligned with FORGE planning priorities.
         """
         return PlannerAgent._clamp(0.55 * constraint_score + 0.35 * feasibility_score - 0.10 * risk_penalty)
 
     def build_plan(self, goal: str, constraints: List[str], pinboard: List[str]) -> PlannerOutput:
-        """Create a planning strategy from goal/constraints using ToT with fallback.
+        """Build a planning strategy from goal and constraints.
 
-        What: Tries Tree-of-Thoughts path generation, recomputes comparable branch
-        scores, prunes weak paths, and returns the best candidate.
-        Why: Improves robustness over single-shot planning while preserving reliability
-        through a legacy planner fallback if ToT parsing or output quality fails.
+        What:
+            Uses Tree-of-Thoughts candidate generation, recomputes branch scores,
+            and returns the best viable path; falls back to legacy planner if needed.
+        Why:
+            Improves robustness versus single-shot planning without sacrificing runtime reliability.
         """
         class _ToTCandidate(BaseModel):
             path_id: str
@@ -116,10 +130,12 @@ class PlannerAgent:
             return PlannerOutput(**data.model_dump())
 
     def review_output(self, goal: str, constraints: List[str], draft: str) -> ReviewOutput:
-        """Score draft quality and produce fixable faults.
+        """Review a draft and return quality plus faults.
 
-        Why: The reviewer acts as a devil's advocate gate before expensive retries,
-        enabling targeted patches instead of full rewrites.
+        What:
+            Produces a numeric quality score and actionable issue list.
+        Why:
+            Supports targeted patching loops instead of expensive full rewrites.
         """
         class _ReviewSchema(BaseModel):
             quality_score: float

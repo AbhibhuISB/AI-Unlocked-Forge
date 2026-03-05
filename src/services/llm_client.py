@@ -14,17 +14,21 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class LLMClient:
-    """Unified text/JSON completion client across Azure OpenAI and Foundry endpoints.
+    """Provide unified text and JSON completion across provider variants.
 
-    Why: The prototype must run in multiple Azure endpoint shapes; this abstraction
-    centralizes provider differences and fallback logic away from agents.
+    What:
+        Handles Azure OpenAI resource mode, Azure Foundry project mode, and OpenAI mode.
+    Why:
+        Centralizes provider-specific behavior so agents remain provider-agnostic.
     """
 
     def __init__(self) -> None:
-        """Initialize provider-specific clients and endpoint mode metadata.
+        """Initialize provider client and endpoint-mode metadata.
 
-        What: Supports classic Azure OpenAI resources and Foundry project endpoints.
-        Why: Real deployments vary by tenant setup; this keeps runtime configuration flexible.
+        What:
+            Resolves env configuration and wires the correct client/transport strategy.
+        Why:
+            Deployment environments vary; startup detection avoids hardcoding one endpoint type.
         """
         provider = (os.getenv("LLM_PROVIDER", "azure") or "azure").strip().lower()
         self.provider = provider
@@ -62,9 +66,12 @@ class LLMClient:
             self.model = (os.getenv("OPENAI_MODEL", "gpt-4o-mini") or "gpt-4o-mini").strip()
 
     def complete_text(self, system_prompt: str, user_prompt: str) -> str:
-        """Return model-generated text for a system/user prompt pair.
+        """Return model-generated text for a prompt pair.
 
-        Why: Provides one call surface for agents regardless of underlying provider API.
+        What:
+            Sends system/user messages and returns plain text output.
+        Why:
+            Gives agents a single completion entrypoint independent of provider API differences.
         """
         if self.provider != "azure":
             response = self.client.responses.create(
@@ -110,10 +117,12 @@ class LLMClient:
         return self._complete_text_foundry(system_prompt=system_prompt, user_prompt=user_prompt)
 
     def _complete_text_foundry(self, system_prompt: str, user_prompt: str) -> str:
-        """Call Azure AI Foundry project chat completions with API-version fallback.
+        """Call Azure Foundry chat completions with API-version fallback.
 
-        Why: Foundry availability can differ by region/version; trying a small ordered
-        set of versions improves compatibility without user intervention.
+        What:
+            Attempts a small ordered set of API versions until one succeeds.
+        Why:
+            Foundry availability can vary by region/version, so fallback improves compatibility.
         """
         url = f"{self.azure_endpoint}/models/chat/completions"
         payload = {
@@ -180,10 +189,12 @@ class LLMClient:
         raise RuntimeError(f"Foundry endpoint call failed for all API versions. Last error: {last_error}")
 
     def complete_json(self, system_prompt: str, user_prompt: str, schema: Type[T]) -> T:
-        """Generate structured output and validate it against a Pydantic schema.
+        """Return schema-validated structured output.
 
-        Why: Agent control loops depend on typed outputs; schema validation protects
-        orchestration from malformed model text.
+        What:
+            Generates text, parses JSON, and validates against a Pydantic schema.
+        Why:
+            Typed outputs keep orchestration deterministic and resilient to malformed responses.
         """
         raw = self.complete_text(system_prompt=system_prompt, user_prompt=user_prompt)
         try:

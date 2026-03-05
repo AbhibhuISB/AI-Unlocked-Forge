@@ -8,9 +8,12 @@ from ..models import ActivityLogEvent
 
 @dataclass
 class SessionMemory:
-    """In-memory run ledger for constraints, traces, assumptions, and activity logs.
+    """Store mutable in-memory run state.
 
-    Why: Maintains a coherent narrative of iterative decisions for transparency and UI output.
+    What:
+        Tracks constraints, assumptions, activity log, and confidence/quality traces.
+    Why:
+        Preserves run continuity and observability across iterative orchestration steps.
     """
 
     constraint_pinboard: List[str] = field(default_factory=list)
@@ -20,8 +23,11 @@ class SessionMemory:
     quality_trace: List[float] = field(default_factory=list)
 
     def log(self, step: str, message: str) -> None:
-        """Append a new activity event in chronological order.
+        """Append an activity event.
 
-        Why: Centralized logging keeps UI behavior and debugging consistent across run modes.
+        What:
+            Adds one timestamp-ordered `ActivityLogEvent` equivalent entry.
+        Why:
+            Centralized logging keeps UI reporting and debugging consistent.
         """
         self.activity_log.append(ActivityLogEvent(step=step, message=message))

@@ -8,14 +8,22 @@ from ..services.llm_client import LLMClient
 
 
 class ExecutorAgent:
-    """Generate drafts and apply targeted revisions from review faults.
+    """Generate drafts and apply targeted revisions.
 
-    Why: Separating execution from planning/review enables iterative refinement
-    without collapsing all concerns into one large prompt.
+    What:
+        Produces initial outputs and delta patches from reviewer faults.
+    Why:
+        Keeps execution concerns separate so iterative refinement remains controllable.
     """
 
     def __init__(self, llm: LLMClient) -> None:
-        """Store shared LLM client for draft generation and patching."""
+        """Initialize executor dependencies.
+
+        What:
+            Stores the LLM client used for generation and patch prompts.
+        Why:
+            Maintains a single model-access abstraction across the pipeline.
+        """
         self.llm = llm
 
     def generate(
@@ -27,10 +35,12 @@ class ExecutorAgent:
         subtasks: List[str],
         evidence: List[EvidenceItem],
     ) -> str:
-        """Create the first full draft from strategy, constraints, and evidence.
+        """Generate the first complete draft.
 
-        Why: Produces a concrete artifact that can be reviewed and patched in the
-        quality loop instead of repeatedly replanning from scratch.
+        What:
+            Synthesizes goal, constraints, plan details, and evidence into one output.
+        Why:
+            Creates a concrete artifact for the review/patch loop to improve iteratively.
         """
         prompt = (
             f"Goal:\n{goal}\n\n"
@@ -44,10 +54,12 @@ class ExecutorAgent:
         return self.llm.complete_text(EXECUTOR_PROMPT, prompt)
 
     def patch(self, draft: str, faults: List[Fault]) -> str:
-        """Apply focused fixes to an existing draft using reviewer fault items.
+        """Patch an existing draft using reviewer fault instructions.
 
-        Why: Delta patching is cheaper and usually more stable than full regeneration
-        when only a subset of quality issues must be corrected.
+        What:
+            Applies issue-specific fixes rather than recreating the whole draft.
+        Why:
+            Delta patching is cheaper and often more stable than full regeneration.
         """
         fault_text = "\n".join(
             [f"- [{fault.severity}] {fault.issue} | Patch: {fault.patch_instruction}" for fault in faults]

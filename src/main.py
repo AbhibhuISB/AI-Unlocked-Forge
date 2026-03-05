@@ -19,29 +19,36 @@ UI_INDEX = Path(__file__).parent / "ui" / "index.html"
 
 @app.get("/health")
 def health() -> dict:
-    """Return a lightweight liveness payload for probes and quick checks.
+    """Return a lightweight liveness payload.
 
-    Why: Allows local/dev orchestration and deployment systems to verify the API process
-    is up without invoking any model-dependent flow.
+    What:
+        Exposes service status without invoking model or orchestration logic.
+    Why:
+        Enables health probes and quick diagnostics in local and deployed environments.
     """
     return {"status": "ok", "service": "forge-prototype"}
 
 
 @app.get("/")
 def index() -> FileResponse:
-    """Serve the built-in static UI entry page.
+    """Serve the built-in UI entry page.
 
-    Why: Keeps demo usage simple by hosting both API and UI from one process.
+    What:
+        Returns the static `index.html` file for the web interface.
+    Why:
+        Keeps onboarding simple by hosting API and UI from the same FastAPI process.
     """
     return FileResponse(UI_INDEX)
 
 
 @app.post("/run", response_model=RunResponse)
 def run_forge(request: RunRequest) -> RunResponse:
-    """Execute a full autonomous FORGE run in one request/response cycle.
+    """Execute a full autonomous FORGE run.
 
-    Why: Provides a single endpoint for quick mode and API consumers that do not
-    need guided human-in-the-loop checkpoints.
+    What:
+        Runs planning, retrieval, execution, and review in one synchronous API call.
+    Why:
+        Supports quick mode and integrations that do not require guided checkpoints.
     """
     try:
         return orchestrator.run(request)
@@ -51,9 +58,12 @@ def run_forge(request: RunRequest) -> RunResponse:
 
 @app.post("/run/interactive/start", response_model=InteractiveRunResponse)
 def run_interactive_start(request: RunRequest) -> InteractiveRunResponse:
-    """Start a guided run session and return either a question or final result.
+    """Start a guided run session.
 
-    Why: Guided mode is stateful and may require multiple user replies before execution.
+    What:
+        Initializes session state and returns either a clarification question or a completed result.
+    Why:
+        Guided mode requires stateful, multi-step interaction before execution can finalize.
     """
     try:
         return orchestrator.start_interactive(request)
@@ -63,9 +73,12 @@ def run_interactive_start(request: RunRequest) -> InteractiveRunResponse:
 
 @app.post("/run/interactive/continue", response_model=InteractiveRunResponse)
 def run_interactive_continue(request: InteractiveContinueRequest) -> InteractiveRunResponse:
-    """Continue a guided run session with user input or a skip signal.
+    """Continue a guided run session.
 
-    Why: Separates session progression from initialization and preserves clear API semantics.
+    What:
+        Applies user feedback (or skip), advances the session, and returns next question or result.
+    Why:
+        Keeps progression explicit and separates session updates from session creation.
     """
     try:
         return orchestrator.continue_interactive(
@@ -80,9 +93,12 @@ def run_interactive_continue(request: InteractiveContinueRequest) -> Interactive
 
 @app.post("/run/interactive/cancel")
 def run_interactive_cancel(request: InteractiveCancelRequest) -> dict:
-    """Cancel and remove an active guided session.
+    """Cancel an active guided session.
 
-    Why: Lets users safely interrupt long or no-longer-relevant guided runs.
+    What:
+        Removes the in-memory interactive session by `session_id`.
+    Why:
+        Gives users deterministic interruption control for long or irrelevant runs.
     """
     orchestrator.cancel_interactive(request.session_id)
     return {"status": "cancelled", "session_id": request.session_id}

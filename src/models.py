@@ -8,9 +8,12 @@ Severity = Literal["critical", "major", "minor"]
 
 
 class SessionConfig(BaseModel):
-    """Runtime tuning knobs for planning/review behavior.
+    """Define runtime tuning parameters.
 
-    Why: Makes confidence/quality gates explicit and user-adjustable per request.
+    What:
+        Stores thresholds, iteration caps, and output formatting preferences.
+    Why:
+        Exposes key pipeline controls to callers while keeping safe bounds.
     """
 
     strategy_threshold: float = Field(default=0.80, ge=0.1, le=1.0)
@@ -20,7 +23,13 @@ class SessionConfig(BaseModel):
 
 
 class RunRequest(BaseModel):
-    """Top-level input payload for quick and guided FORGE runs."""
+    """Represent a run request payload.
+
+    What:
+        Carries goal, constraints, and optional session config.
+    Why:
+        Provides one validated input contract for both quick and guided flows.
+    """
 
     goal: str = Field(min_length=5)
     constraints: List[str] = Field(default_factory=list)
@@ -28,7 +37,13 @@ class RunRequest(BaseModel):
 
 
 class EvidenceItem(BaseModel):
-    """Normalized retrieval evidence record consumed by planner/executor prompts."""
+    """Represent one retrieval evidence item.
+
+    What:
+        Captures title, URL, snippet, and heuristic credibility.
+    Why:
+        Gives planner/executor a consistent source record format.
+    """
 
     title: str
     url: str
@@ -37,7 +52,13 @@ class EvidenceItem(BaseModel):
 
 
 class PlannerOutput(BaseModel):
-    """Structured planner result used as phase-2 execution input."""
+    """Represent planner output for downstream execution.
+
+    What:
+        Stores summary, subtasks, missing-info queries, and confidence score.
+    Why:
+        Provides typed handoff from planning to retrieval and execution phases.
+    """
 
     plan_summary: str
     subtasks: List[str]
@@ -46,13 +67,25 @@ class PlannerOutput(BaseModel):
 
 
 class ExecutorDraft(BaseModel):
-    """Simple container for executor draft text when typed wrapping is needed."""
+    """Wrap executor draft text.
+
+    What:
+        Holds draft output in a typed model.
+    Why:
+        Supports consistency where typed payloads are preferred.
+    """
 
     draft: str
 
 
 class Fault(BaseModel):
-    """Single review fault with severity and actionable patch instruction."""
+    """Describe one review-detected issue.
+
+    What:
+        Includes stable fault ID, severity, issue description, and patch instruction.
+    Why:
+        Enables deterministic patch loops and deadlock/cycle detection.
+    """
 
     id: str
     severity: Severity
@@ -61,21 +94,39 @@ class Fault(BaseModel):
 
 
 class ReviewOutput(BaseModel):
-    """Reviewer output containing quality score and list of fix targets."""
+    """Represent output from the reviewer step.
+
+    What:
+        Contains quality score and actionable fault list.
+    Why:
+        Drives gating and patch behavior in phase 2.
+    """
 
     quality_score: float = Field(ge=0.0, le=1.0)
     faults: List[Fault] = Field(default_factory=list)
 
 
 class ActivityLogEvent(BaseModel):
-    """One user-facing activity event emitted during orchestration."""
+    """Represent one activity log event.
+
+    What:
+        Stores step identifier and human-readable message.
+    Why:
+        Supports transparent progress reporting in UI and API responses.
+    """
 
     step: str
     message: str
 
 
 class RunResponse(BaseModel):
-    """Final output contract for a completed FORGE run."""
+    """Represent final response for a completed run.
+
+    What:
+        Returns output, assumptions, traces, logs, evidence, and end reason.
+    Why:
+        Gives callers both deliverable content and explainability metadata.
+    """
 
     final_output: str
     assumptions: List[str]
@@ -88,7 +139,13 @@ class RunResponse(BaseModel):
 
 
 class InteractiveContinueRequest(BaseModel):
-    """Payload for continuing a guided session with optional user clarification."""
+    """Represent guided-session continuation input.
+
+    What:
+        Carries session ID plus optional user comment or skip flag.
+    Why:
+        Keeps guided progression explicit and validated.
+    """
 
     session_id: str
     user_comment: Optional[str] = None
@@ -96,15 +153,24 @@ class InteractiveContinueRequest(BaseModel):
 
 
 class InteractiveCancelRequest(BaseModel):
-    """Payload for cancelling an in-progress guided session."""
+    """Represent guided-session cancel input.
+
+    What:
+        Identifies session to cancel.
+    Why:
+        Enables safe interruption of in-progress guided runs.
+    """
 
     session_id: str
 
 
 class InteractiveRunResponse(BaseModel):
-    """Response contract for guided mode state transitions.
+    """Represent guided mode state transition response.
 
-    Why: Allows frontend to distinguish whether user input is needed or run is complete.
+    What:
+        Returns session status plus either next question or completed result.
+    Why:
+        Lets clients render guided UX correctly without guessing orchestration state.
     """
 
     status: Literal["needs_input", "completed"]

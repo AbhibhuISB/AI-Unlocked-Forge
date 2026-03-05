@@ -9,20 +9,32 @@ from ..models import EvidenceItem
 
 
 class SearchClient:
-    """Thin Bing Search wrapper that returns normalized evidence items.
+    """Wrap Bing Search and normalize results.
 
-    Why: Isolates vendor-specific API calls and lets retriever consume a stable model.
+    What:
+        Executes search requests and returns pipeline-ready `EvidenceItem` records.
+    Why:
+        Isolates vendor-specific API handling behind a stable interface.
     """
 
     def __init__(self) -> None:
-        """Load search credentials and endpoint from environment variables."""
+        """Initialize search client configuration.
+
+        What:
+            Loads API key and endpoint from environment variables.
+        Why:
+            Keeps credentials/config external and easy to rotate per environment.
+        """
         self.api_key = os.getenv("BING_SEARCH_API_KEY", "")
         self.endpoint = os.getenv("BING_SEARCH_ENDPOINT", "https://api.bing.microsoft.com/v7.0/search")
 
     def search(self, query: str, count: int = 3) -> List[EvidenceItem]:
-        """Execute a web query and convert results into `EvidenceItem` objects.
+        """Execute a web query and return normalized evidence.
 
-        Why: Standardized evidence records simplify downstream prompting and logging.
+        What:
+            Calls Bing Search and maps response items into `EvidenceItem` instances.
+        Why:
+            Standardized evidence structure simplifies downstream prompting and logging.
         """
         if not self.api_key:
             # Deterministic placeholder keeps the pipeline functional without hard failure.
