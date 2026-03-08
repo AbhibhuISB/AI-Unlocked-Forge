@@ -417,6 +417,7 @@ Include explicit assumptions</textarea>
     let liveQuickSource = null;
     let liveQuickEvents = [];
     let liveQuickPollTimer = null;
+    let guidedPollTimer = null;
 
     async function checkHealth() {
       try {
@@ -536,6 +537,43 @@ Include explicit assumptions</textarea>
       }
     }
 
+    function stopGuidedPolling() {
+      if (guidedPollTimer) {
+        clearInterval(guidedPollTimer);
+        guidedPollTimer = null;
+      }
+    }
+
+    function renderSnapshot(snapshot) {
+      if (!snapshot) return;
+      if (snapshot.activity_log) {
+        renderActivity(snapshot.activity_log);
+      }
+      if (snapshot.confidence_trace) {
+        confidenceEl.textContent = renderTrace(snapshot.confidence_trace, 'Confidence');
+      }
+      if (snapshot.quality_trace) {
+        qualityTraceEl.textContent = renderTrace(snapshot.quality_trace, 'Quality');
+      }
+    }
+
+    function startGuidedPolling() {
+      stopGuidedPolling();
+      guidedPollTimer = setInterval(async () => {
+        if (!interactiveSessionId) return;
+        try {
+          const res = await fetch(`/run/interactive/snapshot/${encodeURIComponent(interactiveSessionId)}`, {
+            cache: 'no-store'
+          });
+          if (!res.ok) return;
+          const snapshot = await res.json();
+          renderSnapshot(snapshot);
+        } catch (_) {
+          // Ignore transient polling errors; guided response will still resolve.
+        }
+      }, 150);
+    }
+
     function completeLiveQuick(data) {
       renderFinal(data || {});
       closeLiveQuickStream();
@@ -622,6 +660,7 @@ Include explicit assumptions</textarea>
       qualityTraceEl.textContent = renderTrace(data.quality_trace || [], 'Quality');
       guidedPanel.classList.add('hidden');
       interactiveSessionId = '';
+      stopGuidedPolling();
     }
 
     async function runQuick() {
@@ -734,6 +773,7 @@ Include explicit assumptions</textarea>
       setGuidedVisible(true);
       setGuidedInputEnabled(false);
       plannerQuestionEl.textContent = 'Planner is preparing first clarification...';
+      stopGuidedPolling();
 
       const payload = buildPayload();
       const signal = beginRequest('guided');
@@ -760,8 +800,10 @@ Include explicit assumptions</textarea>
 
         const data = await res.json();
         interactiveSessionId = data.session_id || '';
+        startGuidedPolling();
 
         if (data.status === 'completed' && data.result) {
+          stopGuidedPolling();
           renderFinal(data.result);
           return;
         }
@@ -777,6 +819,7 @@ Include explicit assumptions</textarea>
           runStatusEl.className = 'muted';
           outputEl.textContent = 'Guided run interrupted by user.';
           setGuidedVisible(false);
+          stopGuidedPolling();
         } else {
           runStatusEl.textContent = 'Network error';
           runStatusEl.className = 'err';
@@ -827,6 +870,7 @@ Include explicit assumptions</textarea>
         guidedCommentEl.value = '';
 
         if (data.status === 'completed' && data.result) {
+          stopGuidedPolling();
           renderFinal(data.result);
           return;
         }
@@ -843,6 +887,7 @@ Include explicit assumptions</textarea>
           outputEl.textContent = 'Guided run interrupted by user.';
           setGuidedVisible(false);
           interactiveSessionId = '';
+          stopGuidedPolling();
         } else {
           runStatusEl.textContent = 'Network error';
           runStatusEl.className = 'err';
@@ -886,6 +931,7 @@ Include explicit assumptions</textarea>
       }
 
       interactiveSessionId = '';
+      stopGuidedPolling();
       setGuidedVisible(false);
       setGuidedInputEnabled(false);
       runStatusEl.textContent = 'Interrupted';

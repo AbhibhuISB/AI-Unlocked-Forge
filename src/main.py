@@ -232,6 +232,22 @@ def run_interactive_cancel(request: InteractiveCancelRequest) -> dict:
     return {"status": "cancelled", "session_id": request.session_id}
 
 
+@app.get("/run/interactive/snapshot/{session_id}")
+def run_interactive_snapshot(session_id: str) -> dict:
+    """Return a guided session snapshot for live polling.
+
+    What:
+        Exposes current activity log and traces for an active guided session.
+    Why:
+        Lets UI refresh progress while waiting for guided-step responses.
+    """
+    try:
+        return orchestrator.get_interactive_snapshot(session_id)
+    except Exception as error:
+        status_code = 404 if "not found" in str(error).lower() else 503
+        raise HTTPException(status_code=status_code, detail=f"FORGE interactive snapshot failed: {str(error)}") from error
+
+
 if __name__ == "__main__":
     import uvicorn
 

@@ -525,3 +525,25 @@ class ForgeOrchestrator:
             Frees memory and provides explicit interruption semantics.
         """
         self.interactive_sessions.pop(session_id, None)
+
+    def get_interactive_snapshot(self, session_id: str) -> dict:
+        """Return current guided-session state for live UI refresh.
+
+        What:
+            Exposes activity log and traces for an in-progress interactive session.
+        Why:
+            Allows the client to poll incremental progress while guided steps are running.
+        """
+        if session_id not in self.interactive_sessions:
+            raise RuntimeError("Interactive session not found or expired.")
+
+        state = self.interactive_sessions[session_id]
+        memory = state["memory"]
+        return {
+            "session_id": session_id,
+            "iteration": state.get("iteration", 1),
+            "max_iterations": state.get("max_iterations", 1),
+            "activity_log": [event.model_dump() for event in memory.activity_log],
+            "confidence_trace": list(memory.confidence_trace),
+            "quality_trace": list(memory.quality_trace),
+        }
