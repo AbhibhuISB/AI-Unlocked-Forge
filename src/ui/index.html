@@ -18,14 +18,14 @@
     }
 
     .wrap {
-      max-width: 1100px;
+      max-width: 1280px;
       margin: 0 auto;
       padding: 20px;
     }
 
     .grid {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
       gap: 16px;
     }
 
@@ -39,6 +39,24 @@
     h1 {
       margin: 0 0 8px;
       font-size: 22px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .top-right-note {
+      font-size: 12px;
+      color: #93c5fd;
+      border: 1px solid #334155;
+      border-radius: 999px;
+      padding: 4px 10px;
+      white-space: nowrap;
+      margin-top: 2px;
     }
 
     h2 {
@@ -74,19 +92,19 @@
 
     .row3 {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
       gap: 10px;
     }
 
     .row2 {
       display: grid;
-      grid-template-columns: repeat(2, 1fr);
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
       gap: 10px;
     }
 
     .row3-actions {
       display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
       gap: 10px;
     }
 
@@ -113,8 +131,60 @@
     }
 
     .scroll-box {
-      max-height: 420px;
+      max-height: min(52vh, 560px);
       overflow-y: auto;
+    }
+
+    .trace-stack {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+
+    .trace-title {
+      margin: 0 0 6px;
+      font-size: 13px;
+      color: #cbd5e1;
+    }
+
+    .span-2 {
+      grid-column: 1 / -1;
+    }
+
+    .activity-table-wrap {
+      background: #0b1226;
+      border: 1px solid #23335d;
+      border-radius: 8px;
+      padding: 8px;
+    }
+
+    .activity-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      color: #e2e8f0;
+    }
+
+    .activity-table td {
+      vertical-align: top;
+      padding: 6px 8px;
+      border-bottom: 1px solid #1f2a44;
+    }
+
+    .activity-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .activity-step {
+      width: 170px;
+      color: #93c5fd;
+      white-space: nowrap;
+    }
+
+    .activity-message {
+      color: #e2e8f0;
+      word-break: break-word;
     }
 
     .header-row {
@@ -198,8 +268,13 @@
 
       .grid,
       .row3,
-      .row2 {
+      .row2,
+      .row3-actions {
         grid-template-columns: 1fr;
+      }
+
+      .activity-step {
+        width: 120px;
       }
     }
   </style>
@@ -207,7 +282,10 @@
 
 <body>
   <div class="wrap">
-    <h1>FORGE Prototype UI</h1>
+    <div class="topbar">
+      <h1>FORGE Prototype UI</h1>
+      <div class="top-right-note">for Microsoft AI Unlocked by team Almers</div>
+    </div>
     <div class="muted">Run Planner → Retriever → Executor from the browser. If Azure deployment is pending, you will
       still see clear backend errors here.</div>
 
@@ -283,25 +361,30 @@ Include explicit assumptions</textarea>
     <div class="grid full">
       <div class="card">
         <h2>Activity Log</h2>
-        <div id="activity" class="mono scroll-box"></div>
+        <div id="activity" class="activity-table-wrap scroll-box"></div>
       </div>
       <div class="card">
+        <h2>Traces</h2>
+        <div class="trace-stack">
+          <div>
+            <div class="trace-title">Confidence Trace</div>
+            <div id="confidence" class="mono scroll-box"></div>
+          </div>
+          <div>
+            <div class="trace-title">Quality Trace</div>
+            <div id="qualityTrace" class="mono scroll-box"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid full">
+      <div class="card span-2">
         <div class="header-row">
           <h2>Output</h2>
           <button id="openOutputBtn" class="secondary-btn" disabled>Open In New Tab</button>
         </div>
         <div id="output" class="mono scroll-box"></div>
-      </div>
-    </div>
-
-    <div class="grid full">
-      <div class="card">
-        <h2>Confidence Trace</h2>
-        <div id="confidence" class="mono"></div>
-      </div>
-      <div class="card">
-        <h2>Quality Trace</h2>
-        <div id="qualityTrace" class="mono"></div>
       </div>
     </div>
   </div>
@@ -333,6 +416,7 @@ Include explicit assumptions</textarea>
     let liveQuickSessionId = '';
     let liveQuickSource = null;
     let liveQuickEvents = [];
+    let liveQuickPollTimer = null;
 
     async function checkHealth() {
       try {
@@ -346,12 +430,44 @@ Include explicit assumptions</textarea>
       }
     }
 
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+    }
+
+    function renderTrace(values, label) {
+      if (!values || !values.length) {
+        return 'No trace yet.';
+      }
+
+      return values
+        .map((value, index) => {
+          const numeric = Number(value);
+          const shown = Number.isFinite(numeric) ? numeric.toFixed(2) : String(value);
+          return `Iteration ${index + 1}: ${shown}`;
+        })
+        .join('\n');
+    }
+
     function renderActivity(items) {
       if (!items || !items.length) {
-        activityEl.textContent = 'No activity yet.';
+        activityEl.innerHTML = '<div class="muted">No activity yet.</div>';
         return;
       }
-      activityEl.textContent = items.map((x) => `[${x.step}] ${x.message}`).join('\n');
+
+      const rows = items
+        .map((item) => {
+          const step = escapeHtml(`[${item.step}]`);
+          const message = escapeHtml(item.message);
+          return `<tr><td class="activity-step">${step}</td><td class="activity-message">${message}</td></tr>`;
+        })
+        .join('');
+
+      activityEl.innerHTML = `<table class="activity-table"><tbody>${rows}</tbody></table>`;
     }
 
     function resetPanels() {
@@ -360,7 +476,7 @@ Include explicit assumptions</textarea>
       outputEl.textContent = '';
       latestOutput = '';
       openOutputBtn.disabled = true;
-      activityEl.textContent = '';
+      activityEl.innerHTML = '';
       confidenceEl.textContent = '';
       qualityTraceEl.textContent = '';
       endedEl.textContent = '-';
@@ -413,6 +529,67 @@ Include explicit assumptions</textarea>
       }
     }
 
+    function stopLiveQuickPolling() {
+      if (liveQuickPollTimer) {
+        clearInterval(liveQuickPollTimer);
+        liveQuickPollTimer = null;
+      }
+    }
+
+    function completeLiveQuick(data) {
+      renderFinal(data || {});
+      closeLiveQuickStream();
+      stopLiveQuickPolling();
+      liveQuickSessionId = '';
+      setButtonsDisabled(false);
+      endRequest();
+    }
+
+    function failLiveQuick(message) {
+      runStatusEl.textContent = 'Error';
+      runStatusEl.className = 'err';
+      outputEl.textContent = message;
+      latestOutput = message;
+      openOutputBtn.disabled = !latestOutput;
+      closeLiveQuickStream();
+      stopLiveQuickPolling();
+      liveQuickSessionId = '';
+      setButtonsDisabled(false);
+      endRequest();
+    }
+
+    function startLiveQuickPolling() {
+      stopLiveQuickPolling();
+      liveQuickPollTimer = setInterval(async () => {
+        if (!liveQuickSessionId) return;
+        try {
+          const res = await fetch(`/run/live/snapshot/${encodeURIComponent(liveQuickSessionId)}`, {
+            cache: 'no-store'
+          });
+          if (!res.ok) {
+            return;
+          }
+
+          const snapshot = await res.json();
+          const events = snapshot.events || [];
+          if (events.length) {
+            liveQuickEvents = events;
+            renderActivity(liveQuickEvents);
+          }
+
+          if (snapshot.done) {
+            if (snapshot.error) {
+              failLiveQuick(snapshot.error);
+            } else {
+              completeLiveQuick(snapshot.result || {});
+            }
+          }
+        } catch (_) {
+          // Silent fallback: SSE may still complete the run successfully.
+        }
+      }, 120);
+    }
+
     function endRequest() {
       activeController = null;
       activeMode = '';
@@ -441,8 +618,8 @@ Include explicit assumptions</textarea>
       latestOutput = data.final_output || '';
       outputEl.textContent = latestOutput;
       openOutputBtn.disabled = !latestOutput;
-      confidenceEl.textContent = JSON.stringify(data.confidence_trace || [], null, 2);
-      qualityTraceEl.textContent = JSON.stringify(data.quality_trace || [], null, 2);
+      confidenceEl.textContent = renderTrace(data.confidence_trace || [], 'Confidence');
+      qualityTraceEl.textContent = renderTrace(data.quality_trace || [], 'Quality');
       guidedPanel.classList.add('hidden');
       interactiveSessionId = '';
     }
@@ -452,6 +629,7 @@ Include explicit assumptions</textarea>
       interactiveSessionId = '';
       liveQuickSessionId = '';
       closeLiveQuickStream();
+      stopLiveQuickPolling();
       liveQuickEvents = [];
       setGuidedVisible(false);
       setGuidedInputEnabled(false);
@@ -488,6 +666,7 @@ Include explicit assumptions</textarea>
 
         runStatusEl.textContent = 'Running (live updates)';
         runStatusEl.className = 'muted';
+        startLiveQuickPolling();
 
         liveQuickSource = new EventSource(`/run/live/stream/${encodeURIComponent(liveQuickSessionId)}`);
 
@@ -500,19 +679,19 @@ Include explicit assumptions</textarea>
           }
         });
 
+        liveQuickSource.addEventListener('heartbeat', () => {
+          // No-op: heartbeat frames keep the stream actively flushed.
+        });
+
         liveQuickSource.addEventListener('done', (event) => {
           try {
             const data = JSON.parse(event.data || '{}');
-            renderFinal(data);
+            completeLiveQuick(data);
           } catch (e) {
             runStatusEl.textContent = 'Parse error';
             runStatusEl.className = 'err';
             outputEl.textContent = String(e);
-          } finally {
-            closeLiveQuickStream();
-            liveQuickSessionId = '';
-            setButtonsDisabled(false);
-            endRequest();
+            failLiveQuick(String(e));
           }
         });
 
@@ -528,14 +707,7 @@ Include explicit assumptions</textarea>
 
           runStatusEl.textContent = 'Error';
           runStatusEl.className = 'err';
-          outputEl.textContent = message;
-          latestOutput = message;
-          openOutputBtn.disabled = !latestOutput;
-
-          closeLiveQuickStream();
-          liveQuickSessionId = '';
-          setButtonsDisabled(false);
-          endRequest();
+          failLiveQuick(message);
         });
       } catch (e) {
         if (e?.name === 'AbortError') {
@@ -550,6 +722,7 @@ Include explicit assumptions</textarea>
           openOutputBtn.disabled = false;
         }
         setButtonsDisabled(false);
+        stopLiveQuickPolling();
         endRequest();
       }
     }
@@ -698,6 +871,7 @@ Include explicit assumptions</textarea>
       }
 
       closeLiveQuickStream();
+      stopLiveQuickPolling();
       liveQuickSessionId = '';
 
       if (interactiveSessionId) {
@@ -721,15 +895,42 @@ Include explicit assumptions</textarea>
 
     function openOutputInNewTab() {
       if (!latestOutput) return;
-      const escaped = latestOutput
-        .replaceAll('&', '&amp;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;');
-
+      const safePayload = JSON.stringify(latestOutput).replace(/</g, '\\u003c');
       const html = `<!doctype html>
 <html><head><meta charset="UTF-8"><title>FORGE Output</title>
-<style>body{font-family:Inter,Segoe UI,Arial,sans-serif;padding:20px;line-height:1.4;background:#0b1020;color:#e5e7eb}pre{white-space:pre-wrap;background:#0b1226;border:1px solid #23335d;border-radius:8px;padding:14px}</style>
-</head><body><h2>FORGE Output</h2><pre>${escaped}</pre></body></html>`;
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  body{font-family:Inter,Segoe UI,Arial,sans-serif;padding:20px;line-height:1.5;background:#0b1020;color:#e5e7eb}
+  .markdown{max-width:900px;margin:0 auto;background:#0b1226;border:1px solid #23335d;border-radius:10px;padding:18px}
+  h1,h2,h3,h4,h5,h6{color:#f8fafc;margin-top:1.1em}
+  p,li{color:#e2e8f0}
+  code{background:#1e293b;padding:2px 5px;border-radius:4px}
+  pre{background:#020617;padding:12px;border-radius:8px;overflow-x:auto}
+  a{color:#93c5fd}
+  blockquote{border-left:3px solid #334155;padding-left:10px;color:#cbd5e1}
+  table{border-collapse:collapse;width:100%}
+  th,td{border:1px solid #334155;padding:8px;text-align:left}
+  .fallback{white-space:pre-wrap}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"><\/script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"><\/script>
+</head><body>
+<div class="markdown" id="content"></div>
+<script>
+  (function render(){
+    const raw = ${safePayload};
+    const container = document.getElementById('content');
+    if (window.marked) {
+      const unsafeHtml = window.marked.parse(raw, { gfm: true, breaks: true });
+      const safeHtml = window.DOMPurify ? window.DOMPurify.sanitize(unsafeHtml) : unsafeHtml;
+      container.innerHTML = safeHtml;
+      return;
+    }
+    container.classList.add('fallback');
+    container.textContent = raw;
+  })();
+<\/script>
+</body></html>`;
 
       const tab = window.open('', '_blank');
       if (!tab) return;

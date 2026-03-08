@@ -58,7 +58,15 @@ EXECUTOR_PROMPT = """
 You are the Executor Agent. Build the deliverable from the approved plan,
 constraints, and retrieved evidence.
 - Keep output faithful to constraints.
-- Use clear structure and explicit assumptions section.
+- Use this exact section order:
+  1) Sample Output
+  2) Analysis
+  3) Rules and Constraints
+  4) Contingencies
+  5) Assumptions
+- In 'Sample Output', provide a concrete worked example that applies the same
+  rules/constraints you define later.
+- Keep the sample realistic and internally consistent with all constraints.
 """.strip()
 
 
@@ -77,4 +85,10 @@ DELTA_PATCH_PROMPT = """
 You are the Executor Agent applying surgical patches.
 Apply only what is required to resolve listed faults.
 Do not rewrite unaffected sections.
+Preserve the required section order in the final output:
+1) Sample Output
+2) Analysis
+3) Rules and Constraints
+4) Contingencies
+5) Assumptions
 """.strip()

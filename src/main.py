@@ -27,6 +27,28 @@ orchestrator = ForgeOrchestrator()
 UI_INDEX = Path(__file__).parent / "ui" / "index.html"
 
 
+def _resolve_live_stream_poll_seconds() -> float:
+    """Resolve SSE polling cadence from env with safety bounds.
+
+    What:
+        Parses `LIVE_STREAM_POLL_MS` and converts to seconds.
+    Why:
+        Lets operators tune log-stream responsiveness without code edits.
+    """
+    raw = (os.getenv("LIVE_STREAM_POLL_MS", "30") or "30").strip()
+    try:
+        value_ms = int(raw)
+    except ValueError:
+        value_ms = 30
+
+    # Clamp to a practical range to avoid busy loops or sluggish updates.
+    value_ms = max(10, min(1000, value_ms))
+    return value_ms / 1000.0
+
+
+LIVE_STREAM_POLL_SECONDS = _resolve_live_stream_poll_seconds()
+
+
 @app.get("/health")
 def health() -> dict:
     """Return a lightweight liveness payload.
@@ -108,6 +130,10 @@ def run_forge_live_stream(session_id: str) -> StreamingResponse:
                 yield f"event: log\ndata: {payload}\n\n"
                 cursor += 1
 
+            # Heartbeat keeps SSE connection actively flushing between log events,
+            # so activity updates feel live even during long model calls.
+            yield "event: heartbeat\ndata: {}\n\n"
+
             if snapshot.get("done"):
                 if snapshot.get("error"):
                     payload = json.dumps({"message": snapshot["error"]})
@@ -117,7 +143,7 @@ def run_forge_live_stream(session_id: str) -> StreamingResponse:
                     yield f"event: done\ndata: {payload}\n\n"
                 break
 
-            time.sleep(0.25)
+            time.sleep(LIVE_STREAM_POLL_SECONDS)
 
     return StreamingResponse(
         event_stream(),
@@ -128,6 +154,21 @@ def run_forge_live_stream(session_id: str) -> StreamingResponse:
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.get("/run/live/snapshot/{session_id}")
+def run_forge_live_snapshot(session_id: str) -> dict:
+    """Return current state of a live quick-run session.
+
+    What:
+        Exposes incremental events, completion flag, optional result, and error.
+    Why:
+        Provides a polling fallback when SSE delivery is delayed by client/network buffering.
+    """
+    try:
+        return orchestrator.get_live_snapshot(session_id)
+    except Exception as error:
+        raise HTTPException(status_code=404, detail=f"FORGE live snapshot failed: {str(error)}") from error
 
 
 @app.post("/run/live/cancel")
